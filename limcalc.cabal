@@ -74,6 +74,7 @@ library
                       LimCalc.Risch.Primitive
                       LimCalc.Risch.Exponential 
                       LimCalc.Risch
+                      LimCalc.AlgNum
 
     -- Modules included in this library but not exported.
     -- other-modules:
