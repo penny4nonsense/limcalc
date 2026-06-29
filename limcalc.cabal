@@ -71,6 +71,7 @@ library
                       LimCalc.Poly
                       LimCalc.RationalFunction
                       LimCalc.DiffField
+                      LimCalc.Risch.Primitive
 
     -- Modules included in this library but not exported.
     -- other-modules:

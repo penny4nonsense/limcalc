@@ -196,21 +196,56 @@ squarefree p
              then (a', k) : yun c (gcdPoly c b') (k+1)
              else yun c (gcdPoly c b') (k+1)
 
--- | Resultant of two polynomials via subresultant sequence
+-- | Resultant via Sylvester matrix determinant
+-- More robust with floating point than subresultant PRS
 resultant :: Poly -> Poly -> Double
 resultant p q
   | degree p < 0 || degree q < 0 = 0
-  | degree q > degree p = 
-      let sign = if odd (degree p * degree q) then -1 else 1
-      in sign * resultant q p
-  | otherwise = go p q 1
+  | otherwise = sylvesterDet p q
+
+-- | Compute determinant of Sylvester matrix
+sylvesterDet :: Poly -> Poly -> Double
+sylvesterDet p q =
+  let m   = degree p
+      n   = degree q
+      sz  = m + n
+      mat = sylvesterMatrix p q
+  in determinant sz mat
+
+-- | Build the Sylvester matrix (m+n) x (m+n)
+sylvesterMatrix :: Poly -> Poly -> [[Double]]
+sylvesterMatrix p q =
+  let m   = degree p
+      n   = degree q
+      sz  = m + n
+      pc  = reverse (polyCoef p)  -- highest degree first
+      qc  = reverse (polyCoef q)  -- highest degree first
+      -- n rows for p, each shifted one position right
+      pRows = [ replicate i 0.0 ++ pc ++ replicate (n - 1 - i) 0.0
+              | i <- [0..n-1] ]
+      -- m rows for q, each shifted one position right
+      qRows = [ replicate i 0.0 ++ qc ++ replicate (m - 1 - i) 0.0
+              | i <- [0..m-1] ]
+  in pRows ++ qRows
+
+-- | Gaussian elimination determinant
+determinant :: Int -> [[Double]] -> Double
+determinant 0 _   = 1
+determinant n mat = go mat 1
   where
-    go a b acc
-      | degree b < 0 = acc * leadingCoeff a ^ degree b
-      | degree b == 0 = acc * leadingCoeff b ^ degree a
-      | otherwise =
-          let (_, _, r) = pseudoDivMod a b
-              delta     = degree a - degree b
-              sign      = if odd (degree a * degree b) then -1 else 1
-              lc        = leadingCoeff b ^ (degree a - degree r)
-          in go b r (acc * sign * lc)
+    go [] acc     = acc
+    go (r:rs) acc =
+      case findPivot r rs of
+        Nothing        -> 0  -- singular
+        Just (p, rs')  ->
+          let pivot = head p
+              rs''  = map (eliminate pivot p) rs'
+          in go (map tail rs'') (acc * pivot)
+    findPivot r rs
+      | abs (head r) > 1e-12 = Just (r, rs)
+      | otherwise = case break (\r' -> abs (head r') > 1e-12) rs of
+          (_, [])      -> Nothing
+          (before, (x:after)) -> Just (x, before ++ r : after)
+    eliminate pivot pivotRow row =
+      let factor = head row / pivot
+      in zipWith (\a b -> a - factor * b) row pivotRow
