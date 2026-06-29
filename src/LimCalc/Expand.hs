@@ -1,5 +1,6 @@
 module LimCalc.Expand where
 
+import Data.Ratio (numerator, denominator)
 import LimCalc.Expr
 import LimCalc.Puiseux
 
@@ -37,23 +38,22 @@ expand (Mul f g) x0 = mulSeries (expand f x0) (expand g x0)
 expand (Neg f) x0 = scaleSeries (-1) (expand f x0)
 
 -- Division: f/g = f * g^(-1)
--- For now: expand g, invert series, multiply
 expand (Div f g) x0 = mulSeries (expand f x0) (invertSeries (expand g x0))
 
 -- Power: f^g -- the hard case, handled separately
 expand (Pow f g) x0 = expandPow f g x0
 
--- Exp: e^f(x₀+h) -- compose exp series with expansion of f
-expand (Exp f) x0 = composeSeries expSeries (expand f x0) x0
+-- Exp: e^f(x₀+h)
+expand (Exp f) x0 = composeSeries expTaylor (expand f x0)
 
 -- Log: ln(f(x₀+h))
-expand (Log f) x0 = composeSeries logSeries (expand f x0) x0
+expand (Log f) x0 = composeSeries logTaylor (expand f x0)
 
 -- Sin: sin(f(x₀+h))
-expand (Sin f) x0 = composeSeries sinSeries (expand f x0) x0
+expand (Sin f) x0 = composeSeries sinTaylor (expand f x0)
 
 -- Cos: cos(f(x₀+h))
-expand (Cos f) x0 = composeSeries cosSeries (expand f x0) x0
+expand (Cos f) x0 = composeSeries cosTaylor (expand f x0)
 
 -- Abs: non-analytic, handle separately
 expand (Abs f) x0 = expandAbs f x0
@@ -62,85 +62,105 @@ expand (Abs f) x0 = expandAbs f x0
 depth :: Int
 depth = 8
 
--- | Series for sin(u) around u=0: u - u³/6 + u⁵/120 - ...
-sinSeries :: PuiseuxSeries
-sinSeries = PuiseuxSeries
-  [ PuiseuxTerm 1 1.0
-  , PuiseuxTerm 3 (-1/6)
-  , PuiseuxTerm 5 (1/120)
-  , PuiseuxTerm 7 (-1/5040)
-  ]
+-- | Compose a known series S(u) with expansion E(h) = c₀ + u(h).
+-- Computes S(E(h)) = S(c₀) + S'(c₀)·u + S''(c₀)·u²/2! + ...
+-- where u(h) = E(h) - c₀ is the vanishing part of E.
+composeSeries :: (Double -> PuiseuxSeries) -> PuiseuxSeries -> PuiseuxSeries
+composeSeries taylorAt e =
+  let c0 = constantTerm e
+      u  = removeTerm 0 e
+      s  = taylorAt c0
+  in evalSeriesAt u s
 
--- | Series for cos(u) around u=0: 1 - u²/2 + u⁴/24 - ...
-cosSeries :: PuiseuxSeries
-cosSeries = PuiseuxSeries
-  [ PuiseuxTerm 0 1.0
-  , PuiseuxTerm 2 (-1/2)
-  , PuiseuxTerm 4 (1/24)
-  , PuiseuxTerm 6 (-1/720)
-  ]
+-- | Evaluate a series S = Σ aₙ·t^n by substituting t = u (another series)
+evalSeriesAt :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
+evalSeriesAt u (PuiseuxSeries ts) =
+  foldr addSeries zeroPuiseux
+    [ scaleSeries (coeff t) (powSeries u (pExp t))
+    | t <- ts
+    ]
 
--- | Series for exp(u) around u=0: 1 + u + u²/2 + u³/6 + ...
-expSeries :: PuiseuxSeries
-expSeries = PuiseuxSeries
-  [ PuiseuxTerm 0 1.0
-  , PuiseuxTerm 1 1.0
-  , PuiseuxTerm 2 (1/2)
-  , PuiseuxTerm 3 (1/6)
-  , PuiseuxTerm 4 (1/24)
-  ]
+-- | Zero series
+zeroPuiseux :: PuiseuxSeries
+zeroPuiseux = PuiseuxSeries []
 
--- | Series for log(1+u) around u=0: u - u²/2 + u³/3 - ...
-logSeries :: PuiseuxSeries
-logSeries = PuiseuxSeries
-  [ PuiseuxTerm 1 1.0
-  , PuiseuxTerm 2 (-1/2)
-  , PuiseuxTerm 3 (1/3)
-  , PuiseuxTerm 4 (-1/4)
-  , PuiseuxTerm 5 (1/5)
-  ]
+-- | Raise a series to a rational power
+-- Integer powers only for now; fractional powers (Puiseux case) are TODO
+powSeries :: PuiseuxSeries -> Rational -> PuiseuxSeries
+powSeries _ 0 = PuiseuxSeries [PuiseuxTerm 0 1.0]
+powSeries u n
+  | n > 0 && denominator n == 1 =
+      let k = fromIntegral (numerator n) :: Int
+      in foldl mulSeries (PuiseuxSeries [PuiseuxTerm 0 1.0]) (replicate k u)
+  | otherwise = PuiseuxSeries []  -- fractional powers: TODO
 
--- | Compose a known series S with an expansion E.
--- Computes S(E(h)) by substituting E into S term by term.
--- E must have zero constant term (i.e. E(0) = 0) for this to work directly.
--- For the general case we shift by the constant term first.
-composeSeries :: PuiseuxSeries -> PuiseuxSeries -> Double -> PuiseuxSeries
-composeSeries s e x0 =
-  let c0    = constantTerm e          -- constant term of e
-      e'    = shiftSeries (-c0) e     -- e shifted so e'(0) = 0
-      s'    = shiftInput c0 s         -- s evaluated at c0 + e'
-  in truncateSeries depth s'
-  where
-    shiftInput c0 (PuiseuxSeries ts) =
-      -- substitute (c0 + e') into s by evaluating s at c0 first
-      -- then adding correction terms -- stub for now
-      PuiseuxSeries ts  -- TODO: full composition
+-- | Remove the term with a given exponent from a series
+removeTerm :: Rational -> PuiseuxSeries -> PuiseuxSeries
+removeTerm e (PuiseuxSeries ts) =
+  PuiseuxSeries $ filter (\t -> pExp t /= e) ts
 
 -- | Get the constant term (h^0 coefficient) of a series
 constantTerm :: PuiseuxSeries -> Double
 constantTerm (PuiseuxSeries []) = 0
-constantTerm (PuiseuxSeries (t:ts))
+constantTerm (PuiseuxSeries (t:_))
   | pExp t == 0 = coeff t
   | otherwise   = 0
-
--- | Shift a series by adding a constant to its constant term
-shiftSeries :: Double -> PuiseuxSeries -> PuiseuxSeries
-shiftSeries c s = addSeries s (PuiseuxSeries [PuiseuxTerm 0 c])
 
 -- | Truncate a series to n terms
 truncateSeries :: Int -> PuiseuxSeries -> PuiseuxSeries
 truncateSeries n (PuiseuxSeries ts) = PuiseuxSeries (take n ts)
 
--- | Invert a series: compute 1/s
--- Stub for now
+-- | Invert a series: compute 1/s — stub for now
 invertSeries :: PuiseuxSeries -> PuiseuxSeries
 invertSeries s = s  -- TODO
 
--- | Handle Pow case: f^g
--- Stub for now
+-- | Handle Pow case: f^g — stub for now
 expandPow :: Expr -> Expr -> Double -> PuiseuxSeries
-expandPow f g x0 = PuiseuxSeries []  -- TODO
+expandPow _ _ _ = PuiseuxSeries []  -- TODO
 
--- | Handle Abs case
+-- | Handle Abs case — stub for now
 expandAbs :: Expr -> Double -> PuiseuxSeries
-expandAbs f x0 = PuiseuxSeries []  -- TODO
+expandAbs _ _ = PuiseuxSeries []  -- TODO
+
+-- | Taylor series of sin around x₀
+sinTaylor :: Double -> PuiseuxSeries
+sinTaylor x0 = PuiseuxSeries $ take depth
+  [ PuiseuxTerm (fromIntegral n) (sinCoeff n)
+  | n <- [0..] ]
+  where
+    s = sin x0
+    c = cos x0
+    signs = cycle [s, c, -s, -c]
+    facts = scanl (*) 1 [1..]
+    sinCoeff n = (signs !! n) / fromIntegral (facts !! n)
+
+-- | Taylor series of cos around x₀
+cosTaylor :: Double -> PuiseuxSeries
+cosTaylor x0 = PuiseuxSeries $ take depth
+  [ PuiseuxTerm (fromIntegral n) (cosCoeff n)
+  | n <- [0..] ]
+  where
+    s = sin x0
+    c = cos x0
+    signs = cycle [c, -s, -c, s]
+    facts = scanl (*) 1 [1..]
+    cosCoeff n = (signs !! n) / fromIntegral (facts !! n)
+
+-- | Taylor series of exp around x₀: e^x₀ · Σ tⁿ/n!
+expTaylor :: Double -> PuiseuxSeries
+expTaylor x0 = PuiseuxSeries $ take depth
+  [ PuiseuxTerm (fromIntegral n) (exp x0 / fromIntegral f)
+  | (n, f) <- zip [0..] facts ]
+  where
+    facts = scanl (*) 1 [1..] :: [Integer]
+
+-- | Taylor series of log around x₀
+logTaylor :: Double -> PuiseuxSeries
+logTaylor x0 = PuiseuxSeries $ take depth $
+  PuiseuxTerm 0 (log x0) :
+  [ PuiseuxTerm (fromIntegral n) (logCoeff n)
+  | n <- [1..] ]
+  where
+    logCoeff n =
+      let sign = if even n then -1 else 1
+      in sign / (fromIntegral n * x0 ^ n)
