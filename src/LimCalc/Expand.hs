@@ -63,8 +63,6 @@ depth :: Int
 depth = 8
 
 -- | Compose a known series S(u) with expansion E(h) = c₀ + u(h).
--- Computes S(E(h)) = S(c₀) + S'(c₀)·u + S''(c₀)·u²/2! + ...
--- where u(h) = E(h) - c₀ is the vanishing part of E.
 composeSeries :: (Double -> PuiseuxSeries) -> PuiseuxSeries -> PuiseuxSeries
 composeSeries taylorAt e =
   let c0 = constantTerm e
@@ -114,9 +112,54 @@ truncateSeries n (PuiseuxSeries ts) = PuiseuxSeries (take n ts)
 invertSeries :: PuiseuxSeries -> PuiseuxSeries
 invertSeries s = s  -- TODO
 
--- | Handle Pow case: f^g — stub for now
+-- | Handle Pow case: f^g
 expandPow :: Expr -> Expr -> Double -> PuiseuxSeries
-expandPow _ _ _ = PuiseuxSeries []  -- TODO
+expandPow f (Const r) x0     = expandPowR f (toRational r) x0
+expandPow f (Neg (Const r)) x0 = expandPowR f (toRational (-r)) x0
+expandPow _ _ _              = PuiseuxSeries []  -- TODO: symbolic exponents
+
+-- | Expand f^r where r is a rational number
+expandPowR :: Expr -> Rational -> Double -> PuiseuxSeries
+expandPowR f r x0 =
+  let s = stripZeros $ truncateSeries depth (expand f x0)
+  in case leadingTermNZ s of
+       Nothing -> PuiseuxSeries []
+       Just lt ->
+         let alpha = pExp lt
+             a     = coeff lt
+             w     = truncateSeries depth (normalizeW s lt alpha a)
+             binom = binomialSeries r w
+             scale = a ** fromRational r
+             shift = alpha * r
+         in stripZeros $ truncateSeries depth (shiftExponents shift (scaleSeries scale binom))
+
+-- | Compute w = s/(a*h^alpha) - 1
+normalizeW :: PuiseuxSeries -> PuiseuxTerm -> Rational -> Double -> PuiseuxSeries
+normalizeW (PuiseuxSeries ts) _lt alpha a =
+  let shifted = [ PuiseuxTerm (pExp t - alpha) (coeff t / a) | t <- ts ]
+  in removeTerm 0 (PuiseuxSeries shifted)
+
+-- | Binomial series (1+w)^r = Σ C(r,n) * w^n
+binomialSeries :: Rational -> PuiseuxSeries -> PuiseuxSeries
+binomialSeries r w =
+  let bcs   = binomCoeffs r depth
+      wpows = take (depth+1) $ iterate (truncateSeries depth . mulSeries w)
+                                       (PuiseuxSeries [PuiseuxTerm 0 1.0])
+  in truncateSeries depth $ foldr addSeries zeroPuiseux
+       [ scaleSeries c wp
+       | (c, wp) <- zip bcs wpows
+       ]
+
+-- | Generalized binomial coefficients C(r,n) for rational r
+binomCoeffs :: Rational -> Int -> [Double]
+binomCoeffs r n = take (n+1) $ scanl step 1.0 [0..]
+  where
+    step acc k = acc * (fromRational r - fromIntegral k) / fromIntegral (k+1)
+
+-- | Shift all exponents in a series by a rational amount
+shiftExponents :: Rational -> PuiseuxSeries -> PuiseuxSeries
+shiftExponents delta (PuiseuxSeries ts) =
+  PuiseuxSeries [ PuiseuxTerm (pExp t + delta) (coeff t) | t <- ts ]
 
 -- | Handle Abs case — stub for now
 expandAbs :: Expr -> Double -> PuiseuxSeries

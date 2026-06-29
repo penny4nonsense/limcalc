@@ -26,6 +26,18 @@ leadingTerm :: PuiseuxSeries -> Maybe PuiseuxTerm
 leadingTerm (PuiseuxSeries [])    = Nothing
 leadingTerm (PuiseuxSeries (t:_)) = Just t
 
+-- | Leading term with nonzero coefficient
+leadingTermNZ :: PuiseuxSeries -> Maybe PuiseuxTerm
+leadingTermNZ (PuiseuxSeries ts) =
+  case filter (\t -> coeff t /= 0) ts of
+    []    -> Nothing
+    (t:_) -> Just t
+
+-- | Remove terms with zero coefficients
+stripZeros :: PuiseuxSeries -> PuiseuxSeries
+stripZeros (PuiseuxSeries ts) =
+  PuiseuxSeries $ filter (\t -> coeff t /= 0) ts
+
 -- | Add two Puiseux series
 addSeries :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
 addSeries (PuiseuxSeries s1) (PuiseuxSeries s2) =
