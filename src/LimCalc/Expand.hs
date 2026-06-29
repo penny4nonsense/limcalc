@@ -1,6 +1,5 @@
 module LimCalc.Expand where
 
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ratio (numerator, denominator)
 import LimCalc.Expr
