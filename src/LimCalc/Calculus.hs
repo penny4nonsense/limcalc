@@ -4,6 +4,15 @@ import LimCalc.Expr
 import LimCalc.Puiseux
 import LimCalc.Types
 import LimCalc.Expand
+import LimCalc.SymExpand
+import LimCalc.SymPuiseux
+
+-- | Symbolic derivative of f with respect to var.
+-- Returns an Expr representing f'(x) — the derivative as a function.
+diff :: Expr -> String -> Either ExpandError Expr
+diff f var = do
+  series <- symExpand f var
+  return $ symCoeffAt 1 series
 
 -- | The derivative of f with respect to var at point.
 -- Defined as the coefficient of h^1 in the Puiseux expansion of f(point + h*var).

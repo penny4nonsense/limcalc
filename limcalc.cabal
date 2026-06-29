@@ -64,6 +64,8 @@ library
                       LimCalc.Types
                       LimCalc.Expand
                       LimCalc.Calculus
+                      LimCalc.SymPuiseux
+                      LimCalc.SymExpand
 
     -- Modules included in this library but not exported.
     -- other-modules:
