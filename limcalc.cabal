@@ -68,6 +68,7 @@ library
                       LimCalc.SymExpand
                       LimCalc.Simplify
                       LimCalc.Limit
+                      LimCalc.Poly
 
     -- Modules included in this library but not exported.
     -- other-modules:
