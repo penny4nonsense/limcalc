@@ -1,127 +1,121 @@
 module LimCalc.Poly where
 
--- | Univariate polynomial over Double coefficients.
--- Coefficients are stored in ascending degree order:
--- [a₀, a₁, a₂, ...] represents a₀ + a₁x + a₂x² + ...
--- The zero polynomial is represented as [].
--- Invariant: the last coefficient is always nonzero (or list is empty).
-data Poly = Poly
-  { polyVar  :: String    -- ^ The variable name
-  , polyCoef :: [Double]  -- ^ Coefficients in ascending degree order
+-- | Univariate polynomial over a coefficient ring a.
+-- Coefficients in ascending degree order.
+-- Invariant: last coefficient is nonzero (or list is empty).
+data Poly a = Poly
+  { polyVar  :: String
+  , polyCoef :: [a]
   } deriving (Eq)
 
-instance Show Poly where
-  show (Poly x [])  = "0"
-  show (Poly x cs)  = showPoly x cs
-
-showPoly :: String -> [Double] -> String
-showPoly x cs = concatMap showTerm (reverse $ zip [0..] cs)
-  where
-    showTerm (0, c) = show c
-    showTerm (1, c) = show c ++ x
-    showTerm (n, c) = show c ++ x ++ "^" ++ show n
+instance (Show a, Num a, Eq a) => Show (Poly a) where
+  show (Poly _ [])  = "0"
+  show (Poly x cs)  = concatMap showTerm (reverse $ zip ([0..] :: [Int]) cs)
+    where
+      showTerm (0, c) = show c
+      showTerm (1, c) = show c ++ x
+      showTerm (n, c) = show c ++ x ++ "^" ++ show n
 
 -- | The zero polynomial
-zeroPoly :: String -> Poly
+zeroPoly :: Num a => String -> Poly a
 zeroPoly x = Poly x []
 
--- | The unit polynomial (constant 1)
-onePoly :: String -> Poly
-onePoly x = Poly x [1.0]
+-- | The unit polynomial
+onePoly :: Num a => String -> Poly a
+onePoly x = Poly x [1]
 
 -- | Constant polynomial
-constPoly :: String -> Double -> Poly
-constPoly x 0 = Poly x []
-constPoly x c = Poly x [c]
+constPoly :: (Num a, Eq a) => String -> a -> Poly a
+constPoly x c
+  | c == 0    = Poly x []
+  | otherwise = Poly x [c]
 
 -- | Monomial: c * x^n
-monomialPoly :: String -> Double -> Int -> Poly
+monomialPoly :: (Num a, Eq a) => String -> a -> Int -> Poly a
 monomialPoly x c n
   | c == 0    = zeroPoly x
-  | otherwise = Poly x (replicate n 0.0 ++ [c])
+  | otherwise = Poly x (replicate n 0 ++ [c])
 
--- | Degree of a polynomial (-1 for zero polynomial)
-degree :: Poly -> Int
+-- | Degree (-1 for zero polynomial)
+degree :: Poly a -> Int
 degree (Poly _ []) = -1
 degree (Poly _ cs) = length cs - 1
 
 -- | Leading coefficient
-leadingCoeff :: Poly -> Double
+leadingCoeff :: Num a => Poly a -> a
 leadingCoeff (Poly _ []) = 0
 leadingCoeff (Poly _ cs) = last cs
 
--- | Strip trailing zeros to maintain invariant
-stripTrailing :: Poly -> Poly
+-- | Strip trailing zeros
+stripTrailing :: (Num a, Eq a) => Poly a -> Poly a
 stripTrailing (Poly x cs) = Poly x (reverse $ dropWhile (== 0) $ reverse cs)
 
 -- | Add two polynomials
-addPoly :: Poly -> Poly -> Poly
+addPoly :: (Num a, Eq a) => Poly a -> Poly a -> Poly a
 addPoly (Poly x cs1) (Poly _ cs2) =
   stripTrailing $ Poly x $ addCoefs cs1 cs2
   where
-    addCoefs [] ys         = ys
-    addCoefs xs []         = xs
-    addCoefs (x:xs) (y:ys) = (x+y) : addCoefs xs ys
+    addCoefs [] ys           = ys
+    addCoefs xs []           = xs
+    addCoefs (a:as) (b:bs)   = (a+b) : addCoefs as bs
 
 -- | Negate a polynomial
-negPoly :: Poly -> Poly
+negPoly :: Num a => Poly a -> Poly a
 negPoly (Poly x cs) = Poly x (map negate cs)
 
 -- | Subtract two polynomials
-subPoly :: Poly -> Poly -> Poly
+subPoly :: (Num a, Eq a) => Poly a -> Poly a -> Poly a
 subPoly p q = addPoly p (negPoly q)
 
 -- | Multiply two polynomials
-mulPoly :: Poly -> Poly -> Poly
-mulPoly (Poly x [])  _           = zeroPoly x
-mulPoly _            (Poly x []) = zeroPoly x
+mulPoly :: (Num a, Eq a) => Poly a -> Poly a -> Poly a
+mulPoly (Poly x []) _            = zeroPoly x
+mulPoly _ (Poly x [])            = zeroPoly x
 mulPoly (Poly x cs1) (Poly _ cs2) =
   stripTrailing $ Poly x $ mulCoefs cs1 cs2
   where
-    mulCoefs [] _   = []
+    mulCoefs [] _      = []
     mulCoefs (c:cs) ys =
-      addCoefs (map (*c) ys) (0.0 : mulCoefs cs ys)
+      addCoefs (map (*c) ys) (0 : mulCoefs cs ys)
     addCoefs [] ys         = ys
     addCoefs xs []         = xs
-    addCoefs (x:xs) (y:ys) = (x+y) : addCoefs xs ys
+    addCoefs (a:as) (b:bs) = (a+b) : addCoefs as bs
 
 -- | Scale a polynomial by a constant
-scalePoly :: Double -> Poly -> Poly
-scalePoly 0 (Poly x _)  = zeroPoly x
+scalePoly :: (Num a, Eq a) => a -> Poly a -> Poly a
+scalePoly 0 (Poly x _) = zeroPoly x
 scalePoly c (Poly x cs) = stripTrailing $ Poly x (map (*c) cs)
 
 -- | Euclidean division: (quotient, remainder)
--- p = q * quot + rem, degree(rem) < degree(q)
-divModPoly :: Poly -> Poly -> (Poly, Poly)
+divModPoly :: (Fractional a, Eq a) => Poly a -> Poly a -> (Poly a, Poly a)
 divModPoly p q
-  | degree q < 0  = error "Division by zero polynomial"
+  | degree q < 0        = error "Division by zero polynomial"
   | degree p < degree q = (zeroPoly (polyVar p), p)
-  | otherwise = go p (zeroPoly (polyVar p))
+  | otherwise           = go p (zeroPoly (polyVar p))
   where
     lc = leadingCoeff q
     dq = degree q
     go r acc
       | degree r < dq = (acc, r)
       | otherwise =
-          let scale  = leadingCoeff r / lc
-              deg    = degree r - dq
-              term   = monomialPoly (polyVar p) scale deg
-              r'     = stripTrailing $ subPoly r (mulPoly term q)
+          let scale = leadingCoeff r / lc
+              deg   = degree r - dq
+              term  = monomialPoly (polyVar p) scale deg
+              r'    = stripTrailing $ subPoly r (mulPoly term q)
           in go r' (addPoly acc term)
 
--- | Quotient of polynomial division
-quotPoly :: Poly -> Poly -> Poly
+-- | Quotient
+quotPoly :: (Fractional a, Eq a) => Poly a -> Poly a -> Poly a
 quotPoly p q = fst (divModPoly p q)
 
--- | Remainder of polynomial division
-remPoly :: Poly -> Poly -> Poly
+-- | Remainder
+remPoly :: (Fractional a, Eq a) => Poly a -> Poly a -> Poly a
 remPoly p q = snd (divModPoly p q)
 
 -- | Pseudo-division for exact arithmetic
--- Returns (k, q, r) such that lc(b)^k * a = b*q + r
-pseudoDivMod :: Poly -> Poly -> (Int, Poly, Poly)
+pseudoDivMod :: (Fractional a, Eq a) => Poly a -> Poly a -> (Int, Poly a, Poly a)
 pseudoDivMod a b
-  | degree b < 0 = error "Pseudo-division by zero"
+  | degree b < 0        = error "Pseudo-division by zero"
   | degree a < degree b = (0, zeroPoly (polyVar a), a)
   | otherwise =
       let delta = degree a - degree b + 1
@@ -131,51 +125,50 @@ pseudoDivMod a b
       in (delta, q, r)
 
 -- | GCD via subresultant algorithm
--- Returns monic GCD
-gcdPoly :: Poly -> Poly -> Poly
+gcdPoly :: (Fractional a, Eq a) => Poly a -> Poly a -> Poly a
 gcdPoly p q
-  | degree p < 0 = q
-  | degree q < 0 = p
+  | degree p < 0        = q
+  | degree q < 0        = p
   | degree p < degree q = gcdPoly q p
-  | otherwise = makeMonic $ subresultantGCD p q
+  | otherwise           = makeMonic $ subresultantGCD p q
   where
     makeMonic r
       | degree r < 0 = onePoly (polyVar p)
       | otherwise    = scalePoly (1 / leadingCoeff r) r
 
--- | Subresultant GCD algorithm
-subresultantGCD :: Poly -> Poly -> Poly
+-- | Subresultant GCD
+subresultantGCD :: (Fractional a, Eq a) => Poly a -> Poly a -> Poly a
 subresultantGCD p q = go p q 1 1
   where
-    go a b beta psi
+    go a b _beta psi
       | degree b < 0 = a
       | otherwise =
           let delta  = degree a - degree b
               (_, _, r) = pseudoDivMod a b
+              lcb    = leadingCoeff b
               psi'   = if delta == 0
                          then psi
-                         else ((-leadingCoeff b) ^ delta) /
-                              (psi ^ (delta - 1))
-              beta'  = (-leadingCoeff b) * psi' ^ delta
+                         else ((-lcb) ^ delta) /
+                              (psi ^ max 0 (delta-1))
+              beta'  = (-lcb) * psi' ^ delta
               r'     = scalePoly (1/beta') r
           in go b r' beta' psi'
 
 -- | Differentiate a polynomial
-diffPoly :: Poly -> Poly
-diffPoly (Poly x [])  = zeroPoly x
-diffPoly (Poly x cs)  =
+diffPoly :: (Num a, Eq a) => Poly a -> Poly a
+diffPoly (Poly x []) = zeroPoly x
+diffPoly (Poly x cs) =
   stripTrailing $ Poly x
     [ fromIntegral n * c
-    | (n, c) <- zip [1..] (tail cs)
+    | (n, c) <- zip [1 :: Int ..] (drop 1 cs)
     ]
 
 -- | Evaluate a polynomial at a point
-evalPoly :: Poly -> Double -> Double
+evalPoly :: Num a => Poly a -> a -> a
 evalPoly (Poly _ cs) x = foldr (\c acc -> c + x * acc) 0 cs
 
 -- | Squarefree factorization via Yun's algorithm
--- Returns list of (factor, multiplicity) pairs
-squarefree :: Poly -> [(Poly, Int)]
+squarefree :: (Fractional a, Eq a) => Poly a -> [(Poly a, Int)]
 squarefree p
   | degree p < 0 = []
   | otherwise =
@@ -183,7 +176,6 @@ squarefree p
           g   = gcdPoly p p'
           p1  = quotPoly p g
           p1' = diffPoly p1
-          h   = subPoly p1' (quotPoly (mulPoly p' g) (mulPoly g g))
       in yun p1 (gcdPoly p1 p1') 1
   where
     yun a b k
@@ -197,54 +189,48 @@ squarefree p
              else yun c (gcdPoly c b') (k+1)
 
 -- | Resultant via Sylvester matrix determinant
--- More robust with floating point than subresultant PRS
-resultant :: Poly -> Poly -> Double
+resultant :: (Fractional a, Eq a, Num a) => Poly a -> Poly a -> a
 resultant p q
   | degree p < 0 || degree q < 0 = 0
   | otherwise = sylvesterDet p q
 
--- | Compute determinant of Sylvester matrix
-sylvesterDet :: Poly -> Poly -> Double
+-- | Sylvester matrix determinant
+sylvesterDet :: (Fractional a, Eq a) => Poly a -> Poly a -> a
 sylvesterDet p q =
-  let m   = degree p
-      n   = degree q
-      sz  = m + n
-      mat = sylvesterMatrix p q
+  let mat = sylvesterMatrix p q
+      sz  = degree p + degree q
   in determinant sz mat
 
--- | Build the Sylvester matrix (m+n) x (m+n)
-sylvesterMatrix :: Poly -> Poly -> [[Double]]
+-- | Build Sylvester matrix
+sylvesterMatrix :: Num a => Poly a -> Poly a -> [[a]]
 sylvesterMatrix p q =
-  let m   = degree p
-      n   = degree q
-      sz  = m + n
-      pc  = reverse (polyCoef p)  -- highest degree first
-      qc  = reverse (polyCoef q)  -- highest degree first
-      -- n rows for p, each shifted one position right
-      pRows = [ replicate i 0.0 ++ pc ++ replicate (n - 1 - i) 0.0
+  let m    = degree p
+      n    = degree q
+      pc   = reverse (polyCoef p)
+      qc   = reverse (polyCoef q)
+      pRows = [ replicate i 0 ++ pc ++ replicate (n - 1 - i) 0
               | i <- [0..n-1] ]
-      -- m rows for q, each shifted one position right
-      qRows = [ replicate i 0.0 ++ qc ++ replicate (m - 1 - i) 0.0
+      qRows = [ replicate i 0 ++ qc ++ replicate (m - 1 - i) 0
               | i <- [0..m-1] ]
   in pRows ++ qRows
 
 -- | Gaussian elimination determinant
-determinant :: Int -> [[Double]] -> Double
+determinant :: (Fractional a, Eq a) => Int -> [[a]] -> a
 determinant 0 _   = 1
-determinant n mat = go mat 1
+determinant _ mat = go mat 1
   where
-    go [] acc     = acc
+    go [] acc = acc
     go (r:rs) acc =
       case findPivot r rs of
-        Nothing        -> 0  -- singular
-        Just (p, rs')  ->
+        Nothing     -> 0
+        Just (p, rs') ->
           let pivot = head p
               rs''  = map (eliminate pivot p) rs'
           in go (map tail rs'') (acc * pivot)
     findPivot r rs
-      | abs (head r) > 1e-12 = Just (r, rs)
-      | otherwise = case break (\r' -> abs (head r') > 1e-12) rs of
-          (_, [])      -> Nothing
+      | not (head r == 0) = Just (r, rs)
+      | otherwise = case break (\r' -> not (head r' == 0)) rs of
+          (_, [])           -> Nothing
           (before, (x:after)) -> Just (x, before ++ r : after)
     eliminate pivot pivotRow row =
       let factor = head row / pivot

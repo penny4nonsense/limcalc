@@ -2,20 +2,19 @@ module LimCalc.RationalFunction where
 
 import LimCalc.Poly
 
--- | A rational function p/q
--- Invariant: q is never zero, leading coeff of q is positive
-data RatFun = RatFun
-  { numerator   :: Poly
-  , denominator :: Poly
+-- | A rational function p/q over coefficient type a
+data RatFun a = RatFun
+  { numerator   :: Poly a
+  , denominator :: Poly a
   } deriving (Eq)
 
-instance Show RatFun where
+instance (Show a, Num a, Eq a) => Show (RatFun a) where
   show (RatFun p q)
     | degree q == 0 = show p
     | otherwise     = "(" ++ show p ++ ") / (" ++ show q ++ ")"
 
 -- | Construct a rational function, reducing to lowest terms
-ratFun :: Poly -> Poly -> RatFun
+ratFun :: (Fractional a, Eq a) => Poly a -> Poly a -> RatFun a
 ratFun p q
   | degree q < 0 = error "Zero denominator"
   | otherwise    =
@@ -26,60 +25,55 @@ ratFun p q
       in RatFun (scalePoly (1/lc) p') (scalePoly (1/lc) q')
 
 -- | Zero rational function
-zeroRat :: String -> RatFun
+zeroRat :: (Num a, Eq a) => String -> RatFun a
 zeroRat x = RatFun (zeroPoly x) (onePoly x)
 
 -- | Constant rational function
-constRat :: String -> Double -> RatFun
+constRat :: (Fractional a, Eq a) => String -> a -> RatFun a
 constRat x c = RatFun (constPoly x c) (onePoly x)
 
 -- | Add two rational functions
-addRat :: RatFun -> RatFun -> RatFun
+addRat :: (Fractional a, Eq a) => RatFun a -> RatFun a -> RatFun a
 addRat (RatFun p1 q1) (RatFun p2 q2) =
   ratFun (addPoly (mulPoly p1 q2) (mulPoly p2 q1)) (mulPoly q1 q2)
 
 -- | Negate a rational function
-negRat :: RatFun -> RatFun
+negRat :: (Num a, Eq a) => RatFun a -> RatFun a
 negRat (RatFun p q) = RatFun (negPoly p) q
 
 -- | Subtract two rational functions
-subRat :: RatFun -> RatFun -> RatFun
+subRat :: (Fractional a, Eq a) => RatFun a -> RatFun a -> RatFun a
 subRat r s = addRat r (negRat s)
 
 -- | Multiply two rational functions
-mulRat :: RatFun -> RatFun -> RatFun
+mulRat :: (Fractional a, Eq a) => RatFun a -> RatFun a -> RatFun a
 mulRat (RatFun p1 q1) (RatFun p2 q2) =
   ratFun (mulPoly p1 p2) (mulPoly q1 q2)
 
 -- | Invert a rational function
-invRat :: RatFun -> RatFun
+invRat :: (Fractional a, Eq a) => RatFun a -> RatFun a
 invRat (RatFun p q) = ratFun q p
 
 -- | Divide two rational functions
-divRat :: RatFun -> RatFun -> RatFun
+divRat :: (Fractional a, Eq a) => RatFun a -> RatFun a -> RatFun a
 divRat r s = mulRat r (invRat s)
 
 -- | Differentiate a rational function
--- D(p/q) = (p'q - pq') / q²
-diffRat :: RatFun -> RatFun
+diffRat :: (Fractional a, Eq a) => RatFun a -> RatFun a
 diffRat (RatFun p q) =
   ratFun (subPoly (mulPoly (diffPoly p) q) (mulPoly p (diffPoly q)))
          (mulPoly q q)
 
 -- | Polynomial part and proper fraction part
-ratProperFraction :: RatFun -> (Poly, RatFun)
+ratProperFraction :: (Fractional a, Eq a) => RatFun a -> (Poly a, RatFun a)
 ratProperFraction (RatFun p q)
   | degree p < degree q = (zeroPoly (polyVar p), RatFun p q)
   | otherwise           =
-      let (quot, rem) = divModPoly p q
-      in (quot, RatFun rem q)
+      let (polyQ, polyR) = divModPoly p q
+      in (polyQ, RatFun polyR q)
 
 -- | Hermite reduction
--- Given p/q, returns (g, h) such that:
---   int p/q = g + int h
--- where g is a rational function and h has a squarefree denominator.
--- Uses the subresultant approach to avoid factoring.
-hermiteReduce :: RatFun -> (RatFun, RatFun)
+hermiteReduce :: (Fractional a, Eq a) => RatFun a -> (RatFun a, RatFun a)
 hermiteReduce rf =
   let (polyPart, proper) = ratProperFraction rf
       polyRat = RatFun polyPart (onePoly (polyVar polyPart))
@@ -87,47 +81,34 @@ hermiteReduce rf =
   in (addRat polyRat g, h)
 
 -- | Hermite reduction for proper rational functions
--- Core algorithm: repeatedly extract square factors from denominator
-hermiteReduceProper :: RatFun -> (RatFun, RatFun)
+hermiteReduceProper :: (Fractional a, Eq a) => RatFun a -> (RatFun a, RatFun a)
 hermiteReduceProper (RatFun p q) = go p q (zeroRat (polyVar p))
   where
     go a d acc
       | degree (gcdPoly d (diffPoly d)) == 0 =
-          -- d is squarefree, we're done
           (acc, RatFun a d)
       | otherwise =
-          -- split d into squarefree and non-squarefree parts
-          let d'  = diffPoly d
-              v   = gcdPoly d d'        -- repeated factor part
-              u   = quotPoly d v        -- squarefree part
-              -- solve: u*b + (v'/v)*c = a/v using extended Euclidean
-              -- Actually use: find b,c such that u*b - v'/(deg)*c = a
-              -- Simplified: use the Hermite identity directly
-              (b, c) = hermiteStep a u v
-              -- g contribution: -c/v
-              gContrib = RatFun (negPoly c) v
-              -- remaining numerator over v
-              a' = addPoly (mulPoly u b) (mulPoly (diffPoly c) (quotPoly v u))
+          let d'         = diffPoly d
+              v          = gcdPoly d d'
+              u          = quotPoly d v
+              (b, c)     = hermiteStep a u v
+              gContrib   = RatFun (negPoly c) v
+              a'         = addPoly (mulPoly u b)
+                             (mulPoly (diffPoly c) (quotPoly v u))
           in go a' v (addRat acc gContrib)
 
 -- | One step of Hermite reduction
--- Given a, u, v where d = u*v and gcd(u,v)=1:
--- Find b, c such that a = u*b + D(v)*c (mod v)
--- Returns (b, c)
-hermiteStep :: Poly -> Poly -> Poly -> (Poly, Poly)
+hermiteStep :: (Fractional a, Eq a) => Poly a -> Poly a -> Poly a -> (Poly a, Poly a)
 hermiteStep a u v =
-  let dv    = diffPoly v
-      -- Extended GCD: find s,t such that u*s + dv*t = gcd(u,dv)
+  let dv      = diffPoly v
       (g, s, t) = extGCD u dv
-      -- Scale to match a
-      -- a = g * (a/g), so b = s*(a/g), c = t*(a/g)
-      ag    = quotPoly a g
-      b     = remPoly (mulPoly s ag) v
-      c     = remPoly (mulPoly t ag) v
+      ag      = quotPoly a g
+      b       = remPoly (mulPoly s ag) v
+      c       = remPoly (mulPoly t ag) v
   in (b, c)
 
--- | Extended GCD: returns (g, s, t) such that s*a + t*b = g = gcd(a,b)
-extGCD :: Poly -> Poly -> (Poly, Poly, Poly)
+-- | Extended GCD
+extGCD :: (Fractional a, Eq a) => Poly a -> Poly a -> (Poly a, Poly a, Poly a)
 extGCD a b
   | degree b < 0 =
       let lc = leadingCoeff a
@@ -141,19 +122,11 @@ extGCD a b
           s'        = subPoly t (mulPoly q s)
       in (g, t, s')
 
--- | Partial fraction decomposition
--- Given p/q where q = q1 * q2 * ... (squarefree factors),
--- returns list of (numerator, denominator) pairs
-partialFractions :: RatFun -> [RatFun]
+-- | Partial fractions (stub)
+partialFractions :: (Fractional a, Eq a) => RatFun a -> [RatFun a]
 partialFractions rf@(RatFun p q) =
   let factors = squarefree q
   in case factors of
        []  -> [rf]
-       [_] -> [rf]  -- already irreducible
-       _   -> splitFractions p q factors
-
--- | Split into partial fractions given squarefree factors
-splitFractions :: Poly -> Poly -> [(Poly, Int)] -> [RatFun]
-splitFractions p q factors =
-  -- For now: return unsplit (stub for full implementation)
-  [RatFun p q]
+       [_] -> [rf]
+       _   -> [rf]
