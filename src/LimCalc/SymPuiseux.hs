@@ -25,7 +25,7 @@ normalizeSym :: SymPuiseuxSeries -> SymPuiseuxSeries
 normalizeSym (SymPuiseuxSeries ts) =
   SymPuiseuxSeries $ sortBy (comparing symExp) ts
 
--- | Combine terms with equal exponents
+-- | Combine terms with equal exponents by adding coefficients
 combineLikeSym :: SymPuiseuxSeries -> SymPuiseuxSeries -> SymPuiseuxSeries
 combineLikeSym (SymPuiseuxSeries s1) (SymPuiseuxSeries s2) =
   normalizeSym $ SymPuiseuxSeries $ mergePlus s1 s2
@@ -51,17 +51,25 @@ scaleSymSeries c (SymPuiseuxSeries ts) =
 -- | Multiply two symbolic series (Cauchy product)
 mulSymSeries :: SymPuiseuxSeries -> SymPuiseuxSeries -> SymPuiseuxSeries
 mulSymSeries (SymPuiseuxSeries s1) (SymPuiseuxSeries s2) =
-  normalizeSym $ SymPuiseuxSeries
-    [ SymPuiseuxTerm (symExp t1 + symExp t2) (Mul (symCoeff t1) (symCoeff t2))
-    | t1 <- s1, t2 <- s2
-    ]
+  let raw = [ SymPuiseuxTerm (symExp t1 + symExp t2) (Mul (symCoeff t1) (symCoeff t2))
+            | t1 <- s1, t2 <- s2 ]
+      sorted = normalizeSym (SymPuiseuxSeries raw)
+  in foldTerms sorted
+  where
+    foldTerms (SymPuiseuxSeries []) = SymPuiseuxSeries []
+    foldTerms (SymPuiseuxSeries (t:ts)) =
+      let (same, rest) = span (\t' -> symExp t' == symExp t) ts
+          combined = foldl (\acc t' -> Add acc (symCoeff t')) (symCoeff t) same
+          SymPuiseuxSeries tail = foldTerms (SymPuiseuxSeries rest)
+      in SymPuiseuxSeries (SymPuiseuxTerm (symExp t) combined : tail)
 
--- | Get the coefficient of h^n
+-- | Get the coefficient of h^n — sum all terms with that exponent
 symCoeffAt :: Rational -> SymPuiseuxSeries -> Expr
 symCoeffAt n (SymPuiseuxSeries ts) =
   case filter (\t -> symExp t == n) ts of
-    []    -> Const 0
-    (t:_) -> symCoeff t
+    []     -> Const 0
+    [t]    -> symCoeff t
+    (t:ts) -> foldl (\acc t' -> Add acc (symCoeff t')) (symCoeff t) ts
 
 -- | Leading term
 symLeadingTerm :: SymPuiseuxSeries -> Maybe SymPuiseuxTerm
