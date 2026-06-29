@@ -69,6 +69,7 @@ library
                       LimCalc.Simplify
                       LimCalc.Limit
                       LimCalc.Poly
+                      LimCalc.RationalFunction
 
     -- Modules included in this library but not exported.
     -- other-modules:
