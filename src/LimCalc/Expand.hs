@@ -1,68 +1,107 @@
 module LimCalc.Expand where
 
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Ratio (numerator, denominator)
 import LimCalc.Expr
 import LimCalc.Puiseux
+import LimCalc.Types
 
--- | Expand f(x₀ + h) as a Puiseux series in h.
--- This is the core engine — all calculus operations derive from this.
-expand :: Expr -> Double -> PuiseuxSeries
+-- | Expand f(point + h*var) as a Puiseux series in h.
+-- point: the expansion point for all variables
+-- var:   the variable we are expanding in (the h direction)
+expand :: Expr -> Point -> String -> ExpandResult
 
--- Constants are trivially constant series
-expand (Const c) _ = PuiseuxSeries [PuiseuxTerm 0 c]
+-- Constants
+expand (Const c) _ _ = Right $ PuiseuxSeries [PuiseuxTerm 0 c]
 
--- Pi and E as numeric constants for now
-expand Pi _ = PuiseuxSeries [PuiseuxTerm 0 pi]
-expand E  _ = PuiseuxSeries [PuiseuxTerm 0 (exp 1)]
+-- Pi and E
+expand Pi _ _ = Right $ PuiseuxSeries [PuiseuxTerm 0 pi]
+expand E  _ _ = Right $ PuiseuxSeries [PuiseuxTerm 0 (exp 1)]
 
--- Imaginary unit — placeholder, will need AlgNum
-expand I  _ = PuiseuxSeries [PuiseuxTerm 0 0]  -- TODO: complex
+-- Imaginary unit — placeholder
+expand I  _ _ = Right $ PuiseuxSeries [PuiseuxTerm 0 0]  -- TODO: complex
 
--- Var x at x₀: f(x₀ + h) = x₀ + h
--- So the series is x₀*h^0 + 1*h^1
-expand (Var _) x0 = stripZeros $ PuiseuxSeries
-  [ PuiseuxTerm 0 x0
-  , PuiseuxTerm 1 1.0
-  ]
+-- Variable
+expand (Var name) point var
+  | name == var =
+      -- expanding in this variable: x₀ + h
+      let x0 = Map.findWithDefault 0 name point
+      in Right $ stripZeros $ PuiseuxSeries
+           [ PuiseuxTerm 0 x0
+           , PuiseuxTerm 1 1.0
+           ]
+  | otherwise =
+      -- not the expansion variable: treat as constant
+      case Map.lookup name point of
+        Just c  -> Right $ PuiseuxSeries [PuiseuxTerm 0 c]
+        Nothing -> Left $ Unknown $ "Variable " ++ name ++ " not in point"
 
--- Addition: expand both and add series
-expand (Add f g) x0 = addSeries (expand f x0) (expand g x0)
+-- Addition
+expand (Add f g) point var = do
+  sf <- expand f point var
+  sg <- expand g point var
+  return $ addSeries sf sg
 
 -- Subtraction
-expand (Sub f g) x0 = addSeries (expand f x0) (scaleSeries (-1) (expand g x0))
+expand (Sub f g) point var = do
+  sf <- expand f point var
+  sg <- expand g point var
+  return $ addSeries sf (scaleSeries (-1) sg)
 
--- Multiplication: expand both and multiply series
-expand (Mul f g) x0 = mulSeries (expand f x0) (expand g x0)
+-- Multiplication
+expand (Mul f g) point var = do
+  sf <- expand f point var
+  sg <- expand g point var
+  return $ mulSeries sf sg
 
 -- Negation
-expand (Neg f) x0 = scaleSeries (-1) (expand f x0)
+expand (Neg f) point var = do
+  sf <- expand f point var
+  return $ scaleSeries (-1) sf
 
--- Division: f/g = f * g^(-1)
-expand (Div f g) x0 = mulSeries (expand f x0) (invertSeries (expand g x0))
+-- Division
+expand (Div f g) point var = do
+  sf <- expand f point var
+  sg <- expand g point var
+  case leadingTermNZ (stripZeros sg) of
+    Nothing -> Left $ Singularity "Division by zero series"
+    Just _  -> return $ mulSeries sf (invertSeries sg)
 
--- Power: f^g -- the hard case, handled separately
-expand (Pow f g) x0 = expandPow f g x0
+-- Power
+expand (Pow f g) point var = expandPow f g point var
 
--- Exp: e^f(x₀+h)
-expand (Exp f) x0 = composeSeries expTaylor (expand f x0)
+-- Exp
+expand (Exp f) point var = do
+  sf <- expand f point var
+  return $ composeSeries expTaylor sf
 
--- Log: ln(f(x₀+h))
-expand (Log f) x0 = composeSeries logTaylor (expand f x0)
+-- Log
+expand (Log f) point var = do
+  sf <- expand f point var
+  let c0 = constantTerm sf
+  if c0 <= 0
+    then Left $ Undefined $ "Log of non-positive value: " ++ show c0
+    else return $ composeSeries logTaylor sf
 
--- Sin: sin(f(x₀+h))
-expand (Sin f) x0 = composeSeries sinTaylor (expand f x0)
+-- Sin
+expand (Sin f) point var = do
+  sf <- expand f point var
+  return $ composeSeries sinTaylor sf
 
--- Cos: cos(f(x₀+h))
-expand (Cos f) x0 = composeSeries cosTaylor (expand f x0)
+-- Cos
+expand (Cos f) point var = do
+  sf <- expand f point var
+  return $ composeSeries cosTaylor sf
 
--- Abs: non-analytic, handle separately
-expand (Abs f) x0 = expandAbs f x0
+-- Abs
+expand (Abs f) point var = expandAbs f point var
 
--- | How many terms to compute in series expansions
+-- | How many terms to compute
 depth :: Int
 depth = 8
 
--- | Compose a known series S(u) with expansion E(h) = c₀ + u(h).
+-- | Compose a Taylor series S with expansion E
 composeSeries :: (Double -> PuiseuxSeries) -> PuiseuxSeries -> PuiseuxSeries
 composeSeries taylorAt e =
   let c0 = constantTerm e
@@ -70,7 +109,7 @@ composeSeries taylorAt e =
       s  = taylorAt c0
   in evalSeriesAt u s
 
--- | Evaluate a series S = Σ aₙ·t^n by substituting t = u (another series)
+-- | Evaluate S = Σ aₙ·t^n by substituting t = u
 evalSeriesAt :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
 evalSeriesAt u (PuiseuxSeries ts) =
   foldr addSeries zeroPuiseux
@@ -82,77 +121,76 @@ evalSeriesAt u (PuiseuxSeries ts) =
 zeroPuiseux :: PuiseuxSeries
 zeroPuiseux = PuiseuxSeries []
 
--- | Raise a series to a rational power
--- Integer powers only for now; fractional powers (Puiseux case) are TODO
+-- | Raise a series to a rational power (integer powers only for now)
 powSeries :: PuiseuxSeries -> Rational -> PuiseuxSeries
 powSeries _ 0 = PuiseuxSeries [PuiseuxTerm 0 1.0]
 powSeries u n
   | n > 0 && denominator n == 1 =
       let k = fromIntegral (numerator n) :: Int
       in foldl mulSeries (PuiseuxSeries [PuiseuxTerm 0 1.0]) (replicate k u)
-  | otherwise = PuiseuxSeries []  -- fractional powers: TODO
+  | otherwise = PuiseuxSeries []
 
--- | Remove the term with a given exponent from a series
+-- | Remove term with given exponent
 removeTerm :: Rational -> PuiseuxSeries -> PuiseuxSeries
 removeTerm e (PuiseuxSeries ts) =
   PuiseuxSeries $ filter (\t -> pExp t /= e) ts
 
--- | Get the constant term (h^0 coefficient) of a series
+-- | Get constant term
 constantTerm :: PuiseuxSeries -> Double
 constantTerm (PuiseuxSeries []) = 0
 constantTerm (PuiseuxSeries (t:_))
   | pExp t == 0 = coeff t
   | otherwise   = 0
 
--- | Truncate a series to n terms
+-- | Truncate to n terms
 truncateSeries :: Int -> PuiseuxSeries -> PuiseuxSeries
 truncateSeries n (PuiseuxSeries ts) = PuiseuxSeries (take n ts)
 
--- | Invert a series: compute 1/s
--- Uses geometric series: 1/(a·h^α·(1+w)) = h^(-α)/a · Σ (-w)^n
+-- | Invert a series: 1/s
 invertSeries :: PuiseuxSeries -> PuiseuxSeries
 invertSeries s =
   case leadingTermNZ (stripZeros s) of
-    Nothing -> PuiseuxSeries []  -- 1/0, undefined
+    Nothing -> PuiseuxSeries []
     Just lt ->
       let alpha = pExp lt
           a     = coeff lt
           w     = truncateSeries depth (normalizeW s lt alpha a)
           negw  = scaleSeries (-1) w
-          -- geometric series: Σ (-w)^n
           geo   = geometricSeries negw
           scale = 1.0 / a
           shift = negate alpha
       in stripZeros $ truncateSeries depth
            (shiftExponents shift (scaleSeries scale geo))
 
--- | Geometric series 1/(1-u) = Σ u^n, here we pass (-w) so it computes 1/(1+w)
+-- | Geometric series 1/(1+w) = Σ (-w)^n
 geometricSeries :: PuiseuxSeries -> PuiseuxSeries
 geometricSeries u =
   let upows = take (depth+1) $ iterate (truncateSeries depth . mulSeries u)
                                        (PuiseuxSeries [PuiseuxTerm 0 1.0])
   in truncateSeries depth $ foldr addSeries zeroPuiseux upows
 
--- | Handle Pow case: f^g
-expandPow :: Expr -> Expr -> Double -> PuiseuxSeries
-expandPow f (Const r) x0     = expandPowR f (toRational r) x0
-expandPow f (Neg (Const r)) x0 = expandPowR f (toRational (-r)) x0
-expandPow _ _ _              = PuiseuxSeries []  -- TODO: symbolic exponents
+-- | Handle Pow case
+expandPow :: Expr -> Expr -> Point -> String -> ExpandResult
+expandPow f (Const r) point var     = expandPowR f (toRational r) point var
+expandPow f (Neg (Const r)) point var = expandPowR f (toRational (-r)) point var
+expandPow _ _ _ _                   = Left $ Unknown "Symbolic exponents not yet supported"
 
--- | Expand f^r where r is a rational number
-expandPowR :: Expr -> Rational -> Double -> PuiseuxSeries
-expandPowR f r x0 =
-  let s = stripZeros $ truncateSeries depth (expand f x0)
-  in case leadingTermNZ s of
-       Nothing -> PuiseuxSeries []
-       Just lt ->
-         let alpha = pExp lt
-             a     = coeff lt
-             w     = truncateSeries depth (normalizeW s lt alpha a)
-             binom = binomialSeries r w
-             scale = a ** fromRational r
-             shift = alpha * r
-         in stripZeros $ truncateSeries depth (shiftExponents shift (scaleSeries scale binom))
+-- | Expand f^r for rational r
+expandPowR :: Expr -> Rational -> Point -> String -> ExpandResult
+expandPowR f r point var = do
+  s <- expand f point var
+  let s' = stripZeros $ truncateSeries depth s
+  case leadingTermNZ s' of
+    Nothing -> Right $ PuiseuxSeries []
+    Just lt ->
+      let alpha = pExp lt
+          a     = coeff lt
+          w     = truncateSeries depth (normalizeW s' lt alpha a)
+          binom = binomialSeries r w
+          scale = a ** fromRational r
+          shift = alpha * r
+      in Right $ stripZeros $ truncateSeries depth
+           (shiftExponents shift (scaleSeries scale binom))
 
 -- | Compute w = s/(a*h^alpha) - 1
 normalizeW :: PuiseuxSeries -> PuiseuxTerm -> Rational -> Double -> PuiseuxSeries
@@ -160,7 +198,7 @@ normalizeW (PuiseuxSeries ts) _lt alpha a =
   let shifted = [ PuiseuxTerm (pExp t - alpha) (coeff t / a) | t <- ts ]
   in removeTerm 0 (PuiseuxSeries shifted)
 
--- | Binomial series (1+w)^r = Σ C(r,n) * w^n
+-- | Binomial series (1+w)^r
 binomialSeries :: Rational -> PuiseuxSeries -> PuiseuxSeries
 binomialSeries r w =
   let bcs   = binomCoeffs r depth
@@ -171,20 +209,20 @@ binomialSeries r w =
        | (c, wp) <- zip bcs wpows
        ]
 
--- | Generalized binomial coefficients C(r,n) for rational r
+-- | Generalized binomial coefficients
 binomCoeffs :: Rational -> Int -> [Double]
 binomCoeffs r n = take (n+1) $ scanl step 1.0 [0..]
   where
     step acc k = acc * (fromRational r - fromIntegral k) / fromIntegral (k+1)
 
--- | Shift all exponents in a series by a rational amount
+-- | Shift all exponents by delta
 shiftExponents :: Rational -> PuiseuxSeries -> PuiseuxSeries
 shiftExponents delta (PuiseuxSeries ts) =
   PuiseuxSeries [ PuiseuxTerm (pExp t + delta) (coeff t) | t <- ts ]
 
--- | Handle Abs case — stub for now
-expandAbs :: Expr -> Double -> PuiseuxSeries
-expandAbs _ _ = PuiseuxSeries []  -- TODO
+-- | Handle Abs case
+expandAbs :: Expr -> Point -> String -> ExpandResult
+expandAbs _ _ _ = Left $ Unknown "Abs expansion not yet implemented"
 
 -- | Taylor series of sin around x₀
 sinTaylor :: Double -> PuiseuxSeries
@@ -210,7 +248,7 @@ cosTaylor x0 = PuiseuxSeries $ take depth
     facts = scanl (*) 1 [1..]
     cosCoeff n = (signs !! n) / fromIntegral (facts !! n)
 
--- | Taylor series of exp around x₀: e^x₀ · Σ tⁿ/n!
+-- | Taylor series of exp around x₀
 expTaylor :: Double -> PuiseuxSeries
 expTaylor x0 = PuiseuxSeries $ take depth
   [ PuiseuxTerm (fromIntegral n) (exp x0 / fromIntegral f)
