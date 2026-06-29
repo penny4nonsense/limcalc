@@ -76,7 +76,7 @@ ratProperFraction (RatFun p q)
 
 -- | Hermite reduction
 -- Given p/q, returns (g, h) such that:
---   ∫ p/q = g + ∫ h
+--   int p/q = g + int h
 -- where g is a rational function and h has a squarefree denominator.
 -- Uses the subresultant approach to avoid factoring.
 hermiteReduce :: RatFun -> (RatFun, RatFun)

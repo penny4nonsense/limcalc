@@ -9,6 +9,12 @@ import LimCalc.Expand
 import LimCalc.Calculus
 import LimCalc.Simplify
 import LimCalc.Limit
+import LimCalc.Poly
+import LimCalc.RationalFunction
+import LimCalc.DiffField
+import LimCalc.Risch.Primitive
+import LimCalc.Risch.Exponential
+import LimCalc.Risch
 import LimCalc.Types
 
 main :: IO ()
@@ -21,6 +27,9 @@ tests = testGroup "limcalc"
   , derivativeTests
   , simplifyTests
   , limitTests
+  , polyTests
+  , rationalFunctionTests
+  , rischTests
   ]
 
 -- | Helper: expand at a point
@@ -262,4 +271,148 @@ limitTests = testGroup "Limits"
                   (Pow (Var "x") (Const 2))
           Exists v = limit f "x" 0
       in abs (v - 0.5) < 1e-10 @?= True
+  ]
+
+------------------------------------------------------------------------
+-- Polynomial tests
+------------------------------------------------------------------------
+
+polyTests :: TestTree
+polyTests = testGroup "Polynomial arithmetic"
+  [ testCase "addPoly" $
+      let p = Poly "x" [1, 2, 1]
+          q = Poly "x" [1, 1]
+      in polyCoef (addPoly p q) @?= [2, 3, 1]
+
+  , testCase "mulPoly (x+1)^2 = x^2+2x+1" $
+      let q = Poly "x" [1, 1]
+      in polyCoef (mulPoly q q) @?= [1, 2, 1]
+
+  , testCase "divModPoly exact" $
+      let p = Poly "x" [1, 2, 1]
+          q = Poly "x" [1, 1]
+          (quot, rem) = divModPoly p q
+      in (polyCoef quot, polyCoef rem) @?= ([1, 1], [])
+
+  , testCase "gcdPoly" $
+      let p = Poly "x" [1, 2, 1]
+          q = Poly "x" [1, 1]
+      in polyCoef (gcdPoly p q) @?= [1, 1]
+
+  , testCase "diffPoly x^2+2x+1 = 2x+2" $
+      let p = Poly "x" [1, 2, 1]
+      in polyCoef (diffPoly p) @?= [2, 2]
+
+  , testCase "evalPoly at 2" $
+      let p = Poly "x" [1, 2, 1]  -- (x+1)^2
+      in evalPoly p 2 @?= 9.0
+
+  , testCase "resultant basic" $
+      let p = Poly "x" [1, 1]   -- x+1
+          q = Poly "x" [-1, 1]  -- x-1
+      in resultant p q @?= (-2.0)
+
+  , testCase "degree of zero poly is -1" $
+      degree (zeroPoly "x") @?= (-1)
+
+  , testCase "degree of constant is 0" $
+      degree (constPoly "x" 5) @?= 0
+
+  , testCase "leadingCoeff" $
+      leadingCoeff (Poly "x" [1, 2, 3]) @?= 3.0
+  ]
+
+------------------------------------------------------------------------
+-- Rational function tests
+------------------------------------------------------------------------
+
+rationalFunctionTests :: TestTree
+rationalFunctionTests = testGroup "Rational functions"
+  [ testCase "addRat 1/x + 1/x = 2/x" $
+      let rf = ratFun (Poly "x" [1]) (Poly "x" [0, 1])
+      in numerator (addRat rf rf) @?= Poly "x" [2]
+
+  , testCase "diffRat 1/x = -1/x^2" $
+      let rf  = ratFun (Poly "x" [1]) (Poly "x" [0, 1])
+          rf' = diffRat rf
+      in ( polyCoef (numerator rf')
+         , polyCoef (denominator rf') )
+           @?= ([-1], [0, 0, 1])
+
+  , testCase "hermiteReduce squarefree denom unchanged" $
+      let p  = Poly "x" [1]
+          q  = Poly "x" [-1, 0, 1]
+          rf = ratFun p q
+          (g, h) = hermiteReduce rf
+      in polyCoef (numerator g) @?= []
+
+  , testCase "extGCD basic" $
+      let p = Poly "x" [1, 1]
+          q = Poly "x" [-1, 1]
+          (g, s, t) = extGCD p q
+      in degree g @?= 0
+  ]
+
+------------------------------------------------------------------------
+-- Risch integration tests
+------------------------------------------------------------------------
+
+rischTests :: TestTree
+rischTests = testGroup "Risch integration"
+  [ testCase "int 1 dx = x" $
+      rischIntegrate (Const 1) "x"
+        @?= Elementary (Var "x")
+
+  , testCase "int x dx = x^2/2" $
+      rischIntegrate (Var "x") "x"
+        @?= Elementary (Mul (Const 0.5) (Pow (Var "x") (Const 2.0)))
+
+  , testCase "int x^2 dx = x^3/3" $
+      rischIntegrate (Pow (Var "x") (Const 2)) "x"
+        @?= Elementary (Mul (Const 0.3333333333333333) (Pow (Var "x") (Const 3.0)))
+
+  , testCase "int 1/x dx = log(x)" $
+      rischIntegrate (Div (Const 1) (Var "x")) "x"
+        @?= Elementary (Log (Var "x"))
+
+  , testCase "int exp(x) dx = exp(x)" $
+      rischIntegrate (Exp (Var "x")) "x"
+        @?= Elementary (Exp (Var "x"))
+
+  , testCase "int exp(2x) dx = exp(2x)/2" $
+      rischIntegrate (Exp (Mul (Const 2) (Var "x"))) "x"
+        @?= Elementary (Div (Exp (Mul (Const 2.0) (Var "x"))) (Const 2.0))
+
+  , testCase "int exp(x^2) dx is non-elementary" $
+      rischIntegrate (Exp (Pow (Var "x") (Const 2))) "x"
+        @?= NonElementary
+
+  , testCase "int 1/(x^2-1) dx has log terms" $
+      case rischIntegrate (Div (Const 1) (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x" of
+        Elementary _ -> return ()
+        other        -> assertFailure $ "Expected Elementary, got: " ++ show other
+
+  , testCase "int 1/(x^2+1) dx is non-elementary over reals" $
+      case rischIntegrate (Div (Const 1) (Add (Pow (Var "x") (Const 2)) (Const 1))) "x" of
+        NonElementary -> return ()
+        other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
+
+  , testCase "primitive: int 1/x = log(x)" $
+      let p     = Poly "x" [1]
+          q     = Poly "x" [0, 1]
+          rf    = ratFun p q
+          field = baseField "x"
+      in case integratePrimitive rf field of
+           PrimitiveElementary _ -> return ()
+           other -> assertFailure $ "Expected Elementary"
+
+  , testCase "exponential: int exp(x) = exp(x)" $
+      case integrateExp (Var "x") "x" of
+        Right _ -> return ()
+        Left e  -> assertFailure $ "Expected Right, got: " ++ e
+
+  , testCase "exponential: int exp(x^2) non-elementary" $
+      case integrateExp (Pow (Var "x") (Const 2)) "x" of
+        Left _ -> return ()
+        Right _ -> assertFailure "Expected Left (non-elementary)"
   ]

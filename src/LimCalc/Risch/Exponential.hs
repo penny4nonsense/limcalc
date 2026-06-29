@@ -61,7 +61,7 @@ rothsteinTragerExp a d field =
                ]
 
 -- | Integrate exp(f) directly
--- ∫ exp(f) = exp(f)/f' if f' is constant, else non-elementary in general
+-- int exp(f) = exp(f)/f' if f' is constant, else non-elementary in general
 integrateExp :: Expr -> String -> Either String Expr
 integrateExp f var =
   let f'      = simplify (deriveBase f)

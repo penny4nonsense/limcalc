@@ -36,7 +36,7 @@ rischIntegrate f var =
         Left msg                                   -> NotImplemented msg
 
     LogCase logArg ->
-      -- ∫ log(f) dx = x·log(f) - ∫ x·f'/f dx
+      -- int log(f) dx = x·log(f) - int x·f'/f dx
       -- Integration by parts
       let inner    = Mul (Var var) (Div (deriveBase logArg) logArg)
           innerResult = rischIntegrate inner var
@@ -162,7 +162,7 @@ integratePolynomial f var =
   in polyToExpr p'
 
 -- | Integrate a polynomial term by term
--- ∫ Σ aₙxⁿ dx = Σ aₙxⁿ⁺¹/(n+1)
+-- int Σ aₙxⁿ dx = Σ aₙxⁿ⁺¹/(n+1)
 integratePoly :: Poly -> Poly
 integratePoly (Poly x []) = zeroPoly x
 integratePoly (Poly x cs) =

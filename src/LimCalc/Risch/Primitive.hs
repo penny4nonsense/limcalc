@@ -17,15 +17,13 @@ data PrimitiveResult
 -- Input: rational function p/q in F(θ), the differential field
 integratePrimitive :: RatFun -> DiffField -> PrimitiveResult
 integratePrimitive rf field =
-  -- Step 1: Hermite reduction
   let (g, reduced) = hermiteReduce rf
-  -- Step 2: Rothstein-Trager on the squarefree part
       rtResult = rothsteinTrager reduced field
   in case rtResult of
-       Left err    -> PrimitiveError err
+       Left "NonElementary" -> PrimitiveNonElementary
+       Left err             -> PrimitiveError err
        Right terms ->
-         let -- Combine g with logarithmic terms
-             logPart = foldr addExpr (Const 0)
+         let logPart = foldr addExpr (Const 0)
                [ Mul (Const c) (Log (polyToExpr u))
                | (c, u) <- terms
                ]
@@ -37,13 +35,10 @@ integratePrimitive rf field =
 -- Returns list of (constant, polynomial) pairs for Σ c·log(u)
 rothsteinTrager :: RatFun -> DiffField -> Either String [(Double, Poly)]
 rothsteinTrager (RatFun a d) field =
-  let -- Compute d' = D(d) in the differential field
-      d'    = diffPoly d
-      -- Compute R(z) = resultant_θ(d, a - z·d')
-      -- For now: evaluate at sample points to find roots
+  let d'    = diffPoly d
       rPoly = resultantPoly a d d'
   in case findRationalRoots rPoly of
-       Nothing    -> Left "Non-rational logarithmic constants — non-elementary"
+       Nothing    -> Left "NonElementary"  -- signal non-elementary
        Just roots ->
          Right [ (c, gcdPoly d (subPoly a (scalePoly c d')))
                | c <- roots
