@@ -47,4 +47,10 @@ scaleSeries :: Double -> PuiseuxSeries -> PuiseuxSeries
 scaleSeries c (PuiseuxSeries ts) =
   PuiseuxSeries $ map (\t -> t { coeff = c * coeff t }) ts
 
--- | Multiply two Puiseux series
+-- | Multiply two Puiseux series (Cauchy product)
+mulSeries :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
+mulSeries (PuiseuxSeries s1) (PuiseuxSeries s2) =
+  normalize $ PuiseuxSeries
+    [ PuiseuxTerm (pExp t1 + pExp t2) (coeff t1 * coeff t2)
+    | t1 <- s1, t2 <- s2
+    ]
