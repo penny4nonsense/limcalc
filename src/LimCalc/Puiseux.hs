@@ -41,16 +41,14 @@ stripZeros (PuiseuxSeries ts) =
 -- | Add two Puiseux series
 addSeries :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
 addSeries (PuiseuxSeries s1) (PuiseuxSeries s2) =
-  normalize $ PuiseuxSeries $ mergePlus s1 s2
+  combineLike $ normalize $ PuiseuxSeries $ mergePlus s1 s2
   where
     mergePlus [] ys = ys
     mergePlus xs [] = xs
     mergePlus (x:xs) (y:ys)
       | pExp x == pExp y =
           let c = coeff x + coeff y
-          in if c == 0
-             then mergePlus xs ys
-             else PuiseuxTerm (pExp x) c : mergePlus xs ys
+          in PuiseuxTerm (pExp x) c : mergePlus xs ys
       | pExp x < pExp y  = x : mergePlus xs (y:ys)
       | otherwise        = y : mergePlus (x:xs) ys
 
@@ -62,7 +60,17 @@ scaleSeries c (PuiseuxSeries ts) =
 -- | Multiply two Puiseux series (Cauchy product)
 mulSeries :: PuiseuxSeries -> PuiseuxSeries -> PuiseuxSeries
 mulSeries (PuiseuxSeries s1) (PuiseuxSeries s2) =
-  normalize $ PuiseuxSeries
+  combineLike $ normalize $ PuiseuxSeries
     [ PuiseuxTerm (pExp t1 + pExp t2) (coeff t1 * coeff t2)
     | t1 <- s1, t2 <- s2
     ]
+
+-- | Combine terms with equal exponents by summing their coefficients
+combineLike :: PuiseuxSeries -> PuiseuxSeries
+combineLike (PuiseuxSeries ts) =
+  stripZeros $ PuiseuxSeries $ foldr merge [] ts
+  where
+    merge t [] = [t]
+    merge t (x:xs)
+      | pExp t == pExp x = PuiseuxTerm (pExp t) (coeff t + coeff x) : xs
+      | otherwise        = t : x : xs

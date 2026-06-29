@@ -211,7 +211,7 @@ binomialSeries r w =
 
 -- | Generalized binomial coefficients
 binomCoeffs :: Rational -> Int -> [Double]
-binomCoeffs r n = take (n+1) $ scanl step 1.0 [0..]
+binomCoeffs r n = take (n+1) $ scanl step 1.0 ([0..] :: [Int])
   where
     step acc k = acc * (fromRational r - fromIntegral k) / fromIntegral (k+1)
 
@@ -224,44 +224,40 @@ shiftExponents delta (PuiseuxSeries ts) =
 expandAbs :: Expr -> Point -> String -> ExpandResult
 expandAbs _ _ _ = Left $ Unknown "Abs expansion not yet implemented"
 
--- | Taylor series of sin around x₀
 sinTaylor :: Double -> PuiseuxSeries
 sinTaylor x0 = PuiseuxSeries $ take depth
   [ PuiseuxTerm (fromIntegral n) (sinCoeff n)
-  | n <- [0..] ]
+  | n <- [0..] :: [Int] ]
   where
     s = sin x0
     c = cos x0
     signs = cycle [s, c, -s, -c]
-    facts = scanl (*) 1 [1..]
+    facts = scanl (*) 1 [1..] :: [Int]
     sinCoeff n = (signs !! n) / fromIntegral (facts !! n)
 
--- | Taylor series of cos around x₀
 cosTaylor :: Double -> PuiseuxSeries
 cosTaylor x0 = PuiseuxSeries $ take depth
   [ PuiseuxTerm (fromIntegral n) (cosCoeff n)
-  | n <- [0..] ]
+  | n <- [0..] :: [Int] ]
   where
     s = sin x0
     c = cos x0
     signs = cycle [c, -s, -c, s]
-    facts = scanl (*) 1 [1..]
+    facts = scanl (*) 1 [1..] :: [Int]
     cosCoeff n = (signs !! n) / fromIntegral (facts !! n)
 
--- | Taylor series of exp around x₀
 expTaylor :: Double -> PuiseuxSeries
 expTaylor x0 = PuiseuxSeries $ take depth
   [ PuiseuxTerm (fromIntegral n) (exp x0 / fromIntegral f)
-  | (n, f) <- zip [0..] facts ]
+  | (n, f) <- zip ([0..] :: [Int]) facts ]
   where
-    facts = scanl (*) 1 [1..] :: [Integer]
+    facts = scanl (*) 1 [1..] :: [Int]
 
--- | Taylor series of log around x₀
 logTaylor :: Double -> PuiseuxSeries
 logTaylor x0 = PuiseuxSeries $ take depth $
   PuiseuxTerm 0 (log x0) :
   [ PuiseuxTerm (fromIntegral n) (logCoeff n)
-  | n <- [1..] ]
+  | n <- [1..] :: [Int] ]
   where
     logCoeff n =
       let sign = if even n then -1 else 1
