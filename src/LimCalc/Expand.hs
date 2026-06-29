@@ -20,9 +20,9 @@ expand I  _ = PuiseuxSeries [PuiseuxTerm 0 0]  -- TODO: complex
 
 -- Var x at x₀: f(x₀ + h) = x₀ + h
 -- So the series is x₀*h^0 + 1*h^1
-expand (Var _) x0 = PuiseuxSeries
-  [ PuiseuxTerm 0 x0   -- constant term x₀
-  , PuiseuxTerm 1 1.0  -- linear term h
+expand (Var _) x0 = stripZeros $ PuiseuxSeries
+  [ PuiseuxTerm 0 x0
+  , PuiseuxTerm 1 1.0
   ]
 
 -- Addition: expand both and add series
@@ -108,9 +108,30 @@ constantTerm (PuiseuxSeries (t:_))
 truncateSeries :: Int -> PuiseuxSeries -> PuiseuxSeries
 truncateSeries n (PuiseuxSeries ts) = PuiseuxSeries (take n ts)
 
--- | Invert a series: compute 1/s — stub for now
+-- | Invert a series: compute 1/s
+-- Uses geometric series: 1/(a·h^α·(1+w)) = h^(-α)/a · Σ (-w)^n
 invertSeries :: PuiseuxSeries -> PuiseuxSeries
-invertSeries s = s  -- TODO
+invertSeries s =
+  case leadingTermNZ (stripZeros s) of
+    Nothing -> PuiseuxSeries []  -- 1/0, undefined
+    Just lt ->
+      let alpha = pExp lt
+          a     = coeff lt
+          w     = truncateSeries depth (normalizeW s lt alpha a)
+          negw  = scaleSeries (-1) w
+          -- geometric series: Σ (-w)^n
+          geo   = geometricSeries negw
+          scale = 1.0 / a
+          shift = negate alpha
+      in stripZeros $ truncateSeries depth
+           (shiftExponents shift (scaleSeries scale geo))
+
+-- | Geometric series 1/(1-u) = Σ u^n, here we pass (-w) so it computes 1/(1+w)
+geometricSeries :: PuiseuxSeries -> PuiseuxSeries
+geometricSeries u =
+  let upows = take (depth+1) $ iterate (truncateSeries depth . mulSeries u)
+                                       (PuiseuxSeries [PuiseuxTerm 0 1.0])
+  in truncateSeries depth $ foldr addSeries zeroPuiseux upows
 
 -- | Handle Pow case: f^g
 expandPow :: Expr -> Expr -> Double -> PuiseuxSeries
