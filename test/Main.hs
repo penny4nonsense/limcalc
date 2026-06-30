@@ -161,6 +161,16 @@ expandTests = testGroup "Expansion engine"
       case expand (Abs (Pow (Var "x") (Const 3))) (pt 0) "x" of
         Left (NonAnalytic _) -> return ()
         other                -> assertFailure $ "Expected NonAnalytic, got: " ++ show other
+
+  , testCase "expand 1/(1+x^3) at x=0 reaches sparse low-order terms" $
+      let Right s = expand (Div (Const 1) (Add (Const 1) (Pow (Var "x") (Const 3)))) (pt 0) "x"
+      in [ (pExp t, algToDouble (coeff t)) | t <- terms s ]
+           @?= [(0, 1.0), (3, -1.0), (6, 1.0)]
+
+  , testCase "expand (1+x^3)^(1/2) at x=0 reaches multiple sparse terms" $
+      let Right s = expand (Pow (Add (Const 1) (Pow (Var "x") (Const 3))) (Const 0.5)) (pt 0) "x"
+      in [ (pExp t, algToDouble (coeff t)) | t <- terms s ]
+           @?= [(0, 1.0), (3, 0.5), (6, -0.125)]
   ]
 
 ------------------------------------------------------------------------

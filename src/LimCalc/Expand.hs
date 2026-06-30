@@ -190,19 +190,65 @@ invertSeries s =
     Just lt ->
       let alpha = pExp lt
           a     = coeff lt
-          w     = truncateSeries depth (normalizeW s lt alpha a)
+          w     = normalizeW s lt alpha a
           negw  = scaleSeries (negate algOne) w
-          geo   = geometricSeries negw
+          -- We want depth orders of h *past* the leading term in
+          -- the final result, i.e. orders up to alpha + depth in
+          -- the original series. After dividing through by h^alpha
+          -- (the normalizeW step), that target becomes plain
+          -- `depth` in w/h-space.
+          geo   = geometricSeries negw (fromIntegral depth)
           shift = negate alpha
-      in stripZeros $ truncateSeries depth
+      in stripZeros $ truncateToOrder (fromIntegral depth)
            (shiftExponents shift (scaleSeries (recip a) geo))
 
--- | Geometric series
-geometricSeries :: PuiseuxSeries AlgNum -> PuiseuxSeries AlgNum
-geometricSeries u =
-  let upows = take (depth+1) $ iterate (truncateSeries depth . mulSeries u)
-                                       (PuiseuxSeries [PuiseuxTerm 0 algOne])
-  in truncateSeries depth $ foldr addSeries (PuiseuxSeries []) upows
+-- | Geometric series (1+u)^{-1} = sum (-u)^n, truncated to reach a
+-- target ORDER in h (not a fixed count of terms).
+--
+-- Previously this iterated a fixed number of powers of u (depth+1
+-- of them), which is correct when u's own leading exponent is 1,
+-- but silently under-reaches whenever u is sparse: if u's leading
+-- exponent is delta (e.g. delta=3 for u ~ h^3, or delta=1/2 for
+-- fractional gaps), then depth powers of u only reach order
+-- depth*delta in h, while terms below that order (other than
+-- multiples of delta) are simply absent with no error raised.
+-- That's invisible until a downstream consumer (e.g. Div, via
+-- mulSeries) needed a term at an order this silently never filled.
+--
+-- Iterating until the order reached exceeds the target instead
+-- makes "how far this series is trustworthy" an explicit, order-
+-- based invariant matching the rest of the engine (truncateSeries,
+-- composeSeries, etc.), at the cost of needing more terms when u is
+-- sparse. A hard iteration cap guards against runaway computation
+-- if u's leading exponent is pathologically close to zero.
+geometricSeries :: PuiseuxSeries AlgNum -> Rational -> PuiseuxSeries AlgNum
+geometricSeries u targetOrder =
+  case leadingTermNZ (stripZeros u) of
+    Nothing -> PuiseuxSeries [PuiseuxTerm 0 algOne]  -- u = 0: (1+0)^-1 = 1
+    Just lt ->
+      let gapOrder = pExp lt
+          -- Number of powers of u needed so that n*gapOrder exceeds
+          -- targetOrder. Capped well above any reasonable target to
+          -- avoid looping forever if gapOrder is pathologically tiny.
+          neededN  = if gapOrder <= 0
+                       then maxInvertIters  -- shouldn't happen: u has no zero-order term by construction (normalizeW strips it)
+                       else min maxInvertIters
+                              (ceiling (targetOrder / gapOrder) + 1)
+          upows = take (neededN + 1) $
+                    iterate (truncateToOrder targetOrder . mulSeries u)
+                            (PuiseuxSeries [PuiseuxTerm 0 algOne])
+      in truncateToOrder targetOrder $ foldr addSeries (PuiseuxSeries []) upows
+
+-- | Hard cap on geometric-series iterations, guarding against
+-- runaway computation when the series being inverted has a
+-- pathologically small gap between its leading and next term.
+maxInvertIters :: Int
+maxInvertIters = 200
+
+-- | Truncate a series to terms at or below a given order (exponent).
+truncateToOrder :: Rational -> PuiseuxSeries AlgNum -> PuiseuxSeries AlgNum
+truncateToOrder maxOrder (PuiseuxSeries ts) =
+  PuiseuxSeries (filter (\t -> pExp t <= maxOrder) ts)
 
 -- | Handle Pow case
 expandPow :: Expr -> Expr -> Point -> String -> ExpandResult
@@ -214,17 +260,17 @@ expandPow _ _ _ _                   = Left $ Unknown "Symbolic exponents not yet
 expandPowR :: Expr -> Rational -> Point -> String -> ExpandResult
 expandPowR f r point var = do
   s <- expand f point var
-  let s' = stripZeros $ truncateSeries depth s
+  let s' = stripZeros s
   case leadingTermNZ s' of
     Nothing -> Right $ PuiseuxSeries []
     Just lt ->
       let alpha = pExp lt
           a     = coeff lt
-          w     = truncateSeries depth (normalizeW s' lt alpha a)
-          binom = binomialSeries r w
+          w     = normalizeW s' lt alpha a
+          binom = binomialSeries r w (fromIntegral depth)
           scale = a ** fromRational r
           shift = alpha * r
-      in Right $ stripZeros $ truncateSeries depth
+      in Right $ stripZeros $ truncateToOrder (shift + fromIntegral depth)
            (shiftExponents shift (scaleSeries scale binom))
 
 -- | Compute w = s/(a*h^alpha) - 1
@@ -233,16 +279,29 @@ normalizeW (PuiseuxSeries ts) _lt alpha a =
   let shifted = [ PuiseuxTerm (pExp t - alpha) (coeff t / a) | t <- ts ]
   in removeTerm 0 (PuiseuxSeries shifted)
 
--- | Binomial series (1+w)^r
-binomialSeries :: Rational -> PuiseuxSeries AlgNum -> PuiseuxSeries AlgNum
-binomialSeries r w =
-  let bcs   = binomCoeffs r depth
-      wpows = take (depth+1) $ iterate (truncateSeries depth . mulSeries w)
-                                       (PuiseuxSeries [PuiseuxTerm 0 algOne])
-  in truncateSeries depth $ foldr addSeries (PuiseuxSeries [])
-       [ scaleSeries c wp
-       | (c, wp) <- zip bcs wpows
-       ]
+-- | Binomial series (1+w)^r, truncated to reach a target ORDER in h.
+--
+-- Same fix as geometricSeries: a fixed count of w-powers silently
+-- under-reaches when w is sparse (large or fractional gap between
+-- its leading and next term). Iterate by order instead.
+binomialSeries :: Rational -> PuiseuxSeries AlgNum -> Rational -> PuiseuxSeries AlgNum
+binomialSeries r w targetOrder =
+  case leadingTermNZ (stripZeros w) of
+    Nothing -> PuiseuxSeries [PuiseuxTerm 0 algOne]  -- w = 0: (1+0)^r = 1
+    Just lt ->
+      let gapOrder = pExp lt
+          neededN  = if gapOrder <= 0
+                       then maxInvertIters
+                       else min maxInvertIters
+                              (ceiling (targetOrder / gapOrder) + 1)
+          bcs   = binomCoeffs r neededN
+          wpows = take (neededN + 1) $
+                    iterate (truncateToOrder targetOrder . mulSeries w)
+                            (PuiseuxSeries [PuiseuxTerm 0 algOne])
+      in truncateToOrder targetOrder $ foldr addSeries (PuiseuxSeries [])
+           [ scaleSeries c wp
+           | (c, wp) <- zip bcs wpows
+           ]
 
 -- | Generalized binomial coefficients
 binomCoeffs :: Rational -> Int -> [AlgNum]
