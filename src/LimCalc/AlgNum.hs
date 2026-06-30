@@ -237,11 +237,26 @@ rectInv rect =
 -- (real-axis-only) bisection in 'refineRect', which has no business
 -- being invoked when there is nothing left to isolate.
 --
--- For degree >= 2, we use Durand-Kerner to find all complex roots
--- numerically, then pick whichever root is closest to the rectangle
--- we already have (which came from rectSum/rectMul -- an approximate
--- but reliable estimate of which root we actually want, since
--- algAdd/algMul know roughly where the true sum/product should be).
+-- For 2 <= degree <= degreeCapForExactRootFinding, we use
+-- Durand-Kerner to find all complex roots numerically, then pick
+-- whichever root is closest to the rectangle we already have (which
+-- came from rectSum/rectMul -- an approximate but reliable estimate
+-- of which root we actually want, since algAdd/algMul know roughly
+-- where the true sum/product should be).
+--
+-- Above degreeCapForExactRootFinding: without true minimal
+-- polynomial factorization (a substantial separate feature -- this
+-- module only strips repeated factors via squarefreeRadical, not
+-- irreducible ones), repeated arithmetic can compound minimal
+-- polynomial degree combinatorially. Confirmed concretely: starting
+-- from algI (degree 2) and chaining just a handful of +/- operations
+-- (as Hermite reduction's iterative loop does) produced degree 7
+-- minimal polynomials, making Durand-Kerner catastrophically slow
+-- and effectively hanging on long arithmetic chains. Pin the value
+-- numerically instead -- construct a fresh degree-1 AlgNum directly
+-- from the approximate target -- trading exact algebraic structure
+-- for termination, consistent with the already-approximate spirit
+-- of algSin/algExp/algLog elsewhere in this module.
 refineToRoot :: AlgNum -> AlgNum
 refineToRoot an@(AlgNum p _) =
   let p' = qStrip p
@@ -251,12 +266,36 @@ refineToRoot an@(AlgNum p _) =
                 c1 = qPolyCoef p' !! 1
                 root = negate c0 / c1
             in AlgNum p' (exactRect root)
-       _ -> let approxTarget = complexMidpoint (algIsoRect an)
-                roots        = durandKerner p'
-            in case roots of
-                 [] -> an  -- shouldn't happen for degree >= 2; fail safe
-                 _  -> let chosen = nearestTo approxTarget roots
-                       in AlgNum p' (rectAroundComplex chosen)
+       d | d > degreeCapForExactRootFinding ->
+             let approxTarget = complexMidpoint (algIsoRect an)
+             in pinNumerically approxTarget
+         | otherwise ->
+             let approxTarget = complexMidpoint (algIsoRect an)
+                 roots        = durandKerner p'
+             in case roots of
+                  [] -> an  -- shouldn't happen for degree >= 2; fail safe
+                  _  -> let chosen = nearestTo approxTarget roots
+                        in AlgNum p' (rectAroundComplex chosen)
+
+-- | Degree threshold above which refineToRoot stops attempting exact
+-- root-finding and falls back to a numerically-pinned approximation.
+-- Chosen generously above what any single arithmetic operation
+-- between low-degree AlgNums should need, while still catching the
+-- combinatorial-blowup case from long unminimized arithmetic chains.
+degreeCapForExactRootFinding :: Int
+degreeCapForExactRootFinding = 6
+
+-- | Construct a fresh AlgNum directly from an approximate complex
+-- target, as a degree-1 ("exact" in form, approximate in value)
+-- minimal polynomial. Used when refineToRoot's degree cap is
+-- exceeded; see its header for why.
+pinNumerically :: Complex Double -> AlgNum
+pinNumerically z =
+  let re = toRational (realPart z)
+      im = toRational (imagPart z)
+  in if abs (imagPart z) < 1e-9
+       then fromQ re
+       else fromQ re + fromQ im * algI
 
 -- | Construct a clean isolating rectangle around an exact rational
 -- root, matching the convention used by 'fromQ'.
