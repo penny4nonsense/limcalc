@@ -69,12 +69,16 @@ simplifyMul x (Div (Const 1) y)
   | x == y                       = Const 1
 simplifyMul (Div (Const 1) x) y
   | x == y                       = Const 1
--- Pull constant left: x * (c * z) = c * (x * z)
-simplifyMul x (Mul (Const c) z)  =
-  simplifyMul (Const c) (simplifyMul x z)
--- Pull constant left: (c * y) * z = c * (y * z)
-simplifyMul (Mul (Const c) y) z  =
-  simplifyMul (Const c) (simplifyMul y z)
+-- Pull constant left: x * (c * z) = c * (x * z), but only when x
+-- is not itself a constant (otherwise ping-pongs with the rule below)
+simplifyMul x (Mul (Const c) z)
+  | notConst x                   =
+      simplifyMul (Const c) (simplifyMul x z)
+-- Pull constant left: (c * y) * z = c * (y * z), but only when z
+-- is not itself a constant (otherwise ping-pongs with the rule above)
+simplifyMul (Mul (Const c) y) z
+  | notConst z                   =
+      simplifyMul (Const c) (simplifyMul y z)
 -- Flatten: x * (y * z)
 simplifyMul x (Mul y z) =
   let xy = simplifyMul x y
@@ -105,12 +109,9 @@ simplifyDiv x (Const 1)          = x
 simplifyDiv (Const a) (Const b)
   | b /= 0                       = Const (a / b)
 simplifyDiv x y | x == y        = Const 1
--- Push negation inside: -(a/b) handled by simplifyNeg; but
--- also handle Div(Neg a, b) -> Neg(Div a b) for uniformity,
--- and cancel double negation in Div(Neg a, Neg b) -> Div a b.
+-- Cancel double negation: (-a)/(-b) = a/b
 simplifyDiv (Neg a) (Neg b)      = simplifyDiv a b
--- Common constant factor in Mul numerator and denominator:
--- (c*a)/(c*b) -> a/b
+-- Common constant factor: (c*a)/(c*b) -> a/b
 simplifyDiv (Mul (Const c1) a) (Mul (Const c2) b)
   | c1 == c2 && c1 /= 0         = simplifyDiv a b
 -- (c*a)/c -> a
@@ -135,9 +136,15 @@ simplifyNeg :: Expr -> Expr
 simplifyNeg (Const a)            = Const (-a)
 simplifyNeg (Neg x)              = x
 -- Push negation inside division: -(a/b) = (-a)/b
--- This allows simplifyDiv to fold constants, e.g.
--- Neg(Div(Const -1, x)) -> Div(Const 1, x)
+-- Allows constant folding, e.g. -((-1)/(2x)) -> 1/(2x)
 simplifyNeg (Div a b)            = simplifyDiv (simplifyNeg a) b
 -- Pull negation into constant factor: -(c*x) = (-c)*x
 simplifyNeg (Mul (Const c) x)   = simplifyMul (Const (-c)) x
 simplifyNeg x                    = Neg x
+
+-- | True if the expression is NOT a numeric constant.
+-- Used to guard the "pull constant left" rules in simplifyMul to
+-- prevent them ping-ponging with each other.
+notConst :: Expr -> Bool
+notConst (Const _) = False
+notConst _         = True

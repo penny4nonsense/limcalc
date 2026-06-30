@@ -39,6 +39,7 @@ tests = testGroup "limcalc"
   , trigIntegrationTests
   , specialFunctionTests
   , algebraicExtensionTests
+  , multivariateTests
   ]
 
 -- | Helper: expand at a point
@@ -710,4 +711,56 @@ algebraicExtensionTests = testGroup "Algebraic extension (implicit differentiati
           field = addExtension (baseField "x") (Algebraic p)
       in simplify (derive field (Var "t1"))
            @?= Div (Const 1.0) (Mul (Const 3.0) (Pow (Var "t1") (Const 2.0)))
+  ]
+
+------------------------------------------------------------------------
+-- Multivariate calculus: gradient, Jacobian, Hessian
+------------------------------------------------------------------------
+
+multivariateTests :: TestTree
+multivariateTests = testGroup "Multivariate calculus (gradient, Jacobian, Hessian)"
+  [ testCase "gradient of x^2*y + y^3 w.r.t. [x,y] = [2xy, x^2+3y^2]" $
+      let f = Add (Mul (Pow (Var "x") (Const 2)) (Var "y"))
+                  (Pow (Var "y") (Const 3))
+      in gradient f ["x", "y"]
+           @?= Right [ Mul (Const 2.0) (Mul (Var "x") (Var "y"))
+                     , Add (Pow (Var "x") (Const 2.0))
+                           (Mul (Const 3.0) (Pow (Var "y") (Const 2.0)))
+                     ]
+
+  , testCase "hessian of x^2*y + y^3 is [[2y, 2x], [2x, 6y]]" $
+      let f = Add (Mul (Pow (Var "x") (Const 2)) (Var "y"))
+                  (Pow (Var "y") (Const 3))
+      in hessian f ["x", "y"]
+           @?= Right [ [ Mul (Const 2.0) (Var "y")
+                       , Mul (Const 2.0) (Var "x") ]
+                     , [ Mul (Const 2.0) (Var "x")
+                       , Mul (Const 6.0) (Var "y") ]
+                     ]
+
+  , testCase "hessian is symmetric: H[0][1] == H[1][0]" $
+      let f = Add (Mul (Pow (Var "x") (Const 2)) (Var "y"))
+                  (Pow (Var "y") (Const 3))
+          Right h = hessian f ["x", "y"]
+      in (h !! 0 !! 1) @?= (h !! 1 !! 0)
+
+  , testCase "jacobian of [x^2+y, x*y^2] is [[2x,1],[y^2,2xy]]" $
+      let fs = [ Add (Pow (Var "x") (Const 2)) (Var "y")
+               , Mul (Var "x") (Pow (Var "y") (Const 2)) ]
+      in jacobian fs ["x", "y"]
+           @?= Right [ [ Mul (Const 2.0) (Var "x")
+                       , Const 1.0 ]
+                     , [ Pow (Var "y") (Const 2.0)
+                       , Mul (Const 2.0) (Mul (Var "x") (Var "y")) ]
+                     ]
+
+  , testCase "iterated partial d^2(x^2*y)/dx^2 = 2y" $
+      let f = Mul (Pow (Var "x") (Const 2)) (Var "y")
+      in (partialDiff f "x" >>= \d -> partialDiff d "x")
+           @?= Right (Mul (Const 2.0) (Var "y"))
+
+  , testCase "mixed partial d^2(x^2*y)/(dx dy) = 2x" $
+      let f = Mul (Pow (Var "x") (Const 2)) (Var "y")
+      in (partialDiff f "x" >>= \d -> partialDiff d "y")
+           @?= Right (Mul (Const 2.0) (Var "x"))
   ]
