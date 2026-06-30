@@ -1,9 +1,12 @@
 module LimCalc.Risch.Primitive where
 
+import Data.Complex (Complex, realPart, imagPart)
 import LimCalc.Poly
 import LimCalc.RationalFunction
 import LimCalc.DiffField
 import LimCalc.Expr
+import LimCalc.AlgNum
+import LimCalc.QPoly (QPoly(..))
 
 -- | Result of the Risch algorithm for the primitive case
 data PrimitiveResult
@@ -13,7 +16,16 @@ data PrimitiveResult
   deriving (Show, Eq)
 
 -- | Integrate a rational function in the primitive case
-integratePrimitive :: RatFun Double -> DiffField -> PrimitiveResult
+--
+-- Generalized from RatFun Double to RatFun AlgNum: trig integration
+-- (sin/cos via Euler's formula, e^(i*theta)) produces genuinely
+-- complex coefficients, which Double cannot represent. AlgNum's
+-- Num/Fractional instances let all the existing arithmetic
+-- (hermiteReduce, gcdPoly, etc.) carry through unchanged; what
+-- actually needed rewriting was root-finding (see findComplexRoots)
+-- and Expr conversion (see algNumToExpr), both of which assumed real
+-- rational coefficients.
+integratePrimitive :: RatFun AlgNum -> DiffField -> PrimitiveResult
 integratePrimitive rf field =
   let (g, reduced) = hermiteReduce rf
       rtResult     = rothsteinTrager reduced field
@@ -22,14 +34,29 @@ integratePrimitive rf field =
        Left err             -> PrimitiveError err
        Right terms          ->
          let logPart = foldr addExpr (Const 0)
-               [ Mul (Const c) (Log (polyToExpr u))
+               [ Mul (algNumToExpr c) (Log (polyToExpr u))
                | (c, u) <- terms
                ]
              gExpr = ratFunToExpr g
          in PrimitiveElementary (addExpr gExpr logPart)
 
 -- | Rothstein-Trager algorithm
-rothsteinTrager :: RatFun Double -> DiffField -> Either String [(Double, Poly Double)]
+--
+-- Uses findRationalRoots, NOT findComplexRoots: the classical
+-- elementary/non-elementary criterion for ordinary rational-function
+-- integration over Q(x) genuinely requires the resultant's roots to
+-- be RATIONAL, not merely complex. Allowing any complex root (as
+-- findComplexRoots does) answers a different, less restrictive
+-- question -- "can this be integrated if I'm willing to introduce
+-- complex-coefficient logarithms" -- which is always satisfiable and
+-- silently misclassifies genuinely non-elementary-over-the-reals
+-- integrals like 1/(x^2+1) (whose antiderivative is arctan(x), not
+-- expressible with rational-coefficient logs) as Elementary. See
+-- Risch.Exponential's use of findComplexRoots for the case where
+-- this distinction does NOT apply (there, the field has already
+-- been deliberately extended to include i, so complex roots are the
+-- right question).
+rothsteinTrager :: RatFun AlgNum -> DiffField -> Either String [(AlgNum, Poly AlgNum)]
 rothsteinTrager (RatFun a d) field =
   let d'    = diffPoly d
       rPoly = resultantPoly a d d'
@@ -38,26 +65,30 @@ rothsteinTrager (RatFun a d) field =
        Just roots ->
          Right [ (c, gcdPoly d (subPoly a (scalePoly c d')))
                | c <- roots
-               , c /= 0
+               , not (isAlgZero c)
                ]
 
 -- | Compute the Rothstein-Trager resultant polynomial R(z)
-resultantPoly :: Poly Double -> Poly Double -> Poly Double -> Poly Double
+--
+-- Interpolation itself is generic arithmetic and works unchanged
+-- over AlgNum; only the evaluation points needed to become AlgNum
+-- (via fromInteger, which AlgNum's Num instance already supports).
+resultantPoly :: Poly AlgNum -> Poly AlgNum -> Poly AlgNum -> Poly AlgNum
 resultantPoly a d d' =
   let n      = degree d
-      points = [ fromIntegral i | i <- [-n..n] ]
+      points = [ fromInteger (fromIntegral i) | i <- [-n..n] ] :: [AlgNum]
       values = [ resultant d (subPoly a (scalePoly z d')) | z <- points ]
   in interpolate (polyVar d) (zip points values)
 
 -- | Lagrange interpolation
-interpolate :: String -> [(Double, Double)] -> Poly Double
+interpolate :: String -> [(AlgNum, AlgNum)] -> Poly AlgNum
 interpolate x points =
   foldr (addPoly . lagrangeBasis x points)
         (zeroPoly x)
         (zip [0..] points)
 
 -- | One Lagrange basis polynomial
-lagrangeBasis :: String -> [(Double, Double)] -> (Int, (Double, Double)) -> Poly Double
+lagrangeBasis :: String -> [(AlgNum, AlgNum)] -> (Int, (AlgNum, AlgNum)) -> Poly AlgNum
 lagrangeBasis x points (i, (xi, yi)) =
   let others = [ (j, xj) | (j, (xj, _)) <- zip [0..] points, j /= i ]
       basis  = foldr mulBasis (constPoly x 1) others
@@ -67,52 +98,118 @@ lagrangeBasis x points (i, (xi, yi)) =
     mulBasis (_, xj) p =
       mulPoly p (subPoly (Poly x [0, 1]) (constPoly x xj))
 
--- | Find rational roots of a polynomial
-findRationalRoots :: Poly Double -> Maybe [Double]
+-- | Find rational (real, zero-imaginary-part) roots of a polynomial
+-- with AlgNum coefficients, for the classical Rothstein-Trager
+-- elementary/non-elementary criterion (see rothsteinTrager's header
+-- for why this must be rational-only, not findComplexRoots's full
+-- complex-root version).
+--
+-- Built on top of findComplexRoots: find all complex roots
+-- numerically, then keep only those with negligible imaginary part,
+-- verifying each by evaluating the polynomial there. This replaces
+-- the old approach (enumerating rational candidates via divisor
+-- factorization of the constant/leading coefficients), which only
+-- ever worked for genuinely rational (Double) coefficients and
+-- cannot be meaningfully generalized to AlgNum coefficients at all.
+findRationalRoots :: Poly AlgNum -> Maybe [AlgNum]
 findRationalRoots p
   | degree p < 0 = Just []
   | otherwise    =
-      let candidates = rationalRootCandidates p
-          roots      = filter (\r -> abs (evalPoly p r) < 1e-10) candidates
+      case findComplexRoots p of
+        Nothing -> Nothing
+        Just allRoots ->
+          let realRoots = [ r | r <- allRoots, isReal r, verifiedRoot r ]
+          in if null realRoots && degree p > 0
+               then Nothing
+               else Just realRoots
+  where
+    isReal r = abs (algImagDouble r) < 1e-6
+    verifiedRoot r = abs (algToDouble (evalPoly p r)) < 1e-6
+
+-- | Find all complex roots of a polynomial with AlgNum coefficients.
+--
+-- Previously (findRationalRoots) this enumerated rational root
+-- candidates via divisor factorization of the constant and leading
+-- coefficients -- meaningless once coefficients are AlgNum rather
+-- than rational. Replaced with genuine complex root-finding by
+-- approximating each AlgNum coefficient to a Rational (via its
+-- Double midpoint) and reusing AlgNum's existing durandKerner
+-- machinery directly.
+--
+-- This is consistent in spirit with the rest of the module's
+-- already-approximate transcendental functions (algSin, algExp,
+-- etc.); the polynomial's own coefficients are already only
+-- Double-approximated AlgNum values by the time they reach this
+-- resultant/interpolation pipeline, so there is no loss of rigor
+-- relative to the rest of the pipeline by also approximating here.
+--
+-- IMPORTANT: this finds ANY complex root, not just rational ones.
+-- Risch.Primitive's own rothsteinTrager uses findRationalRoots
+-- instead, since the classical elementary/non-elementary criterion
+-- for integration over Q(x) requires rational roots specifically.
+-- This function (findComplexRoots) remains correct and necessary for
+-- Risch.Exponential's trig-integration use, where the field has
+-- already been deliberately extended to include i.
+findComplexRoots :: Poly AlgNum -> Maybe [AlgNum]
+findComplexRoots p
+  | degree p < 0 = Just []
+  | otherwise    =
+      let approxQPoly = QPoly (map algNumToRational (polyCoef p))
+          roots       = durandKerner approxQPoly
       in if null roots && degree p > 0
          then Nothing
-         else Just roots
+         else Just (map complexToAlgNum roots)
 
--- | Generate rational root candidates
-rationalRootCandidates :: Poly Double -> [Double]
-rationalRootCandidates (Poly _ []) = []
-rationalRootCandidates (Poly _ cs) =
-  let c0      = abs (head cs)
-      cn      = abs (last cs)
-      factors n = [ fromIntegral i
-                  | i <- [1..max 10 (round n :: Int)]
-                  , round n `mod` i == (0 :: Int) ]
-      ps = factors c0
-      qs = factors cn
-  in nub [ p/q | p <- 0:ps ++ map negate ps
-               , q <- qs
-               , q /= 0 ]
-  where
-    nub [] = []
-    nub (x:xs) = x : nub (filter (/= x) xs)
+-- | Approximate an AlgNum as a Rational via its Double midpoint, for
+-- feeding into Durand-Kerner (which only needs approximate numeric
+-- coefficients, not exact algebraic ones).
+algNumToRational :: AlgNum -> Rational
+algNumToRational = toRational . algToDouble
+
+-- | Lift a Complex Double root (from durandKerner) back to an
+-- AlgNum, by directly constructing real + imaginary*i from the
+-- rounded Double parts.
+complexToAlgNum :: Complex Double -> AlgNum
+complexToAlgNum z =
+  let re = realPart z
+      im = imagPart z
+  in if abs im < 1e-9
+       then fromQ (toRational re)
+       else fromQ (toRational re) + fromQ (toRational im) * algI
 
 -- | Convert a polynomial to an Expr
-polyToExpr :: Poly Double -> Expr
+polyToExpr :: Poly AlgNum -> Expr
 polyToExpr (Poly _ [])  = Const 0
 polyToExpr (Poly x cs)  =
   foldr1 Add [ termToExpr x n c
              | (n, c) <- zip [0..] cs
-             , c /= 0 ]
+             , not (isAlgZero c) ]
   where
-    termToExpr _ 0 c = Const c
-    termToExpr x 1 c = Mul (Const c) (Var x)
-    termToExpr x n c = Mul (Const c) (Pow (Var x) (Const (fromIntegral (n :: Int))))
+    termToExpr _ 0 c = algNumToExpr c
+    termToExpr x 1 c = Mul (algNumToExpr c) (Var x)
+    termToExpr x n c = Mul (algNumToExpr c) (Pow (Var x) (Const (fromIntegral (n :: Int))))
 
 -- | Convert a rational function to an Expr
-ratFunToExpr :: RatFun Double -> Expr
+ratFunToExpr :: RatFun AlgNum -> Expr
 ratFunToExpr (RatFun p q)
-  | degree q == 0 && leadingCoeff q == 1 = polyToExpr p
+  | degree q == 0 && isAlgZero (leadingCoeff q - algOne) = polyToExpr p
   | otherwise = Div (polyToExpr p) (polyToExpr q)
+
+-- | Convert an AlgNum to an Expr, decomposing into real and
+-- imaginary Double parts (since Expr's Const is still Double-only --
+-- see the project's own note that this is "a placeholder for AlgNum
+-- pending full algebraic number implementation"). Produces a plain
+-- Const for real values, avoiding a spurious "+ 0*I" for the common
+-- case.
+algNumToExpr :: AlgNum -> Expr
+algNumToExpr a =
+  let re = algToDouble a
+      im = algImagDouble a
+  in if abs im < 1e-12
+       then Const re
+       else if abs re < 1e-12
+              then Mul (Const im) I
+              else Add (Const re) (Mul (Const im) I)
 
 -- | Add two expressions
 addExpr :: Expr -> Expr -> Expr

@@ -7,6 +7,7 @@ import LimCalc.DiffField
 import LimCalc.Simplify
 import LimCalc.Risch.Primitive
 import LimCalc.Risch.Exponential
+import LimCalc.AlgNum
 
 -- | Result of the Risch integration algorithm
 data RischResult
@@ -22,7 +23,7 @@ rischIntegrate f var =
   case classifyIntegrand f var of
     RationalCase rf ->
       let field = baseField var
-      in case integratePrimitive rf field of
+      in case integratePrimitive (ratFunDoubleToAlgNum rf) field of
            PrimitiveElementary e  -> Elementary (simplify e)
            PrimitiveNonElementary -> NonElementary
            PrimitiveError s       -> RischError s
@@ -152,7 +153,7 @@ exprToPoly _           var = constPoly var 0
 -- | Integrate a polynomial expression term by term
 integratePolynomial :: Expr -> String -> Expr
 integratePolynomial f var =
-  polyToExpr (integratePoly (exprToPoly f var))
+  polyToExpr (polyDoubleToAlgNum (integratePoly (exprToPoly f var)))
 
 -- | Integrate a polynomial term by term
 integratePoly :: Poly Double -> Poly Double
@@ -160,3 +161,19 @@ integratePoly (Poly x []) = zeroPoly x
 integratePoly (Poly x cs) =
   Poly x $ 0 : [ c / fromIntegral (n+1 :: Int)
                 | (n, c) <- zip [0..] cs ]
+
+-- | Convert a Poly Double to a Poly AlgNum, at the boundary between
+-- this module's real-coefficient classification/polynomial-
+-- integration logic and Risch.Primitive's AlgNum-generalized
+-- machinery (needed for trig integration's genuinely complex
+-- coefficients; ordinary polynomial/rational-function integration
+-- in x never needs complex numbers, so this module's own logic
+-- correctly stays in Double throughout and only converts at the
+-- call boundary).
+polyDoubleToAlgNum :: Poly Double -> Poly AlgNum
+polyDoubleToAlgNum (Poly x cs) = Poly x (map (fromRational . toRational) cs)
+
+-- | Convert a RatFun Double to a RatFun AlgNum, same rationale as
+-- polyDoubleToAlgNum.
+ratFunDoubleToAlgNum :: RatFun Double -> RatFun AlgNum
+ratFunDoubleToAlgNum (RatFun p q) = RatFun (polyDoubleToAlgNum p) (polyDoubleToAlgNum q)
