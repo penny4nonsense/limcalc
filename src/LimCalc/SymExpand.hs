@@ -115,16 +115,31 @@ symExpand (Si f) var = do
       s  = siSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Li, Ci, Ei: singular at natural expansion points
-symExpand (Li _)  _ = Left $ Unknown
-  "Li (logarithmic integral) expansion not yet implemented: \
-  \li(x) has a logarithmic singularity at x=0 and x=1"
-symExpand (Ci _)  _ = Left $ Unknown
-  "Ci (cosine integral) expansion not yet implemented: \
-  \Ci(x) has a logarithmic singularity at x=0"
-symExpand (Ei _)  _ = Left $ Unknown
-  "Ei (exponential integral) expansion not yet implemented: \
-  \Ei(x) has a logarithmic singularity at x=0"
+-- Ei: has logarithmic singularity at x=0, but is analytic everywhere
+-- else. Taylor series via iterated derivatives around a general point.
+-- Ei^(1)(x) = e^x/x, subsequent derivatives via deriveBase.
+symExpand (Ei f) var = do
+  sf <- symExpand f var
+  let c0 = symConstantTerm sf
+      u  = removeSymTerm 0 sf
+      s  = eiSymTaylor c0
+  return $ symEvalSeriesAt u s
+
+-- Ci: same structure as Ei -- analytic away from x=0, logarithmic
+-- singularity at 0. Ci^(1)(x) = cos(x)/x.
+symExpand (Ci f) var = do
+  sf <- symExpand f var
+  let c0 = symConstantTerm sf
+      u  = removeSymTerm 0 sf
+      s  = ciSymTaylor c0
+  return $ symEvalSeriesAt u s
+
+-- Li: involves log(log(x)) which requires a different treatment.
+-- li(x) = Ei(log(x)), so its series around any point involves
+-- a doubly-logarithmic term not supported by symPuiseux.
+symExpand (Li _) _ = Left $ Unknown
+  "Li expansion not yet implemented: li(x) = Ei(log(x)), \
+  \requires doubly-logarithmic Puiseux extension"
 
 -- | How many terms
 depth :: Int
@@ -213,7 +228,37 @@ logSymTaylor x = SymPuiseuxSeries $ take depth $
           xpow   = Pow x (Const (fromIntegral n))
       in Div sign (Mul factor xpow)
 
--- | Symbolic Taylor series for erf around symbolic x.
+-- | Symbolic Taylor series for Ei around symbolic x.
+-- Ei(x + h) = Ei(x) + (e^x/x)h + ...
+-- Ei^(n)(x) computed by iterating deriveBase.
+eiSymTaylor :: Expr -> SymPuiseuxSeries
+eiSymTaylor x = SymPuiseuxSeries $ take depth
+  [ SymPuiseuxTerm (fromIntegral n) (eiSymCoeff n)
+  | n <- [0..] :: [Int] ]
+  where
+    derivs = iterate (\e -> simplify (deriveBase e)) (Ei x)
+    eiSymCoeff 0 = Ei x
+    eiSymCoeff n =
+      let d      = derivs !! n
+          facts  = scanl (*) 1 [1..] :: [Int]
+          factor = fromIntegral (facts !! n)
+      in if factor == 1 then d else Div d (Const factor)
+
+-- | Symbolic Taylor series for Ci around symbolic x.
+-- Ci(x + h) = Ci(x) + (cos(x)/x)h + ...
+-- Ci^(n)(x) computed by iterating deriveBase.
+ciSymTaylor :: Expr -> SymPuiseuxSeries
+ciSymTaylor x = SymPuiseuxSeries $ take depth
+  [ SymPuiseuxTerm (fromIntegral n) (ciSymCoeff n)
+  | n <- [0..] :: [Int] ]
+  where
+    derivs = iterate (\e -> simplify (deriveBase e)) (Ci x)
+    ciSymCoeff 0 = Ci x
+    ciSymCoeff n =
+      let d      = derivs !! n
+          facts  = scanl (*) 1 [1..] :: [Int]
+          factor = fromIntegral (facts !! n)
+      in if factor == 1 then d else Div d (Const factor)
 erfSymTaylor :: Expr -> SymPuiseuxSeries
 erfSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (erfSymCoeff n)
