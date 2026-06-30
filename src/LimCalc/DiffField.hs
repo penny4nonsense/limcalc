@@ -72,6 +72,23 @@ deriveExpr field (Cos f)     =
   Neg (Mul (Sin f) (deriveExpr field f))
 deriveExpr field (Abs f)     =
   Div (Mul f (deriveExpr field f)) (Abs f)
+deriveExpr field (Erf f)     =
+  -- D(erf(f)) = (2/sqrt(pi)) * e^(-f^2) * Df
+  Mul (Mul (Div (Const 2) (Pow Pi (Const 0.5)))
+           (Exp (Neg (Mul f f))))
+      (deriveExpr field f)
+deriveExpr field (Li f)      =
+  -- D(li(f)) = Df / log(f)
+  Div (deriveExpr field f) (Log f)
+deriveExpr field (Si f)      =
+  -- D(Si(f)) = sin(f)/f * Df
+  Mul (Div (Sin f) f) (deriveExpr field f)
+deriveExpr field (Ci f)      =
+  -- D(Ci(f)) = cos(f)/f * Df
+  Mul (Div (Cos f) f) (deriveExpr field f)
+deriveExpr field (Ei f)      =
+  -- D(Ei(f)) = e^f/f * Df
+  Mul (Div (Exp f) f) (deriveExpr field f)
 deriveExpr field _           = Const 0
 
 -- | Look up the derivation of an extension variable
@@ -130,6 +147,20 @@ collectExts (Sin f)     =
 collectExts (Cos f)     =
   -- cos(f) = Re(exp(i·f))
   Exponential (Mul I f) : collectExts f
+collectExts (Erf f)     = specialExt "erf" f : collectExts f
+collectExts (Li f)      = specialExt "li"  f : collectExts f
+collectExts (Si f)      = specialExt "Si"  f : collectExts f
+collectExts (Ci f)      = specialExt "Ci"  f : collectExts f
+collectExts (Ei f)      = specialExt "Ei"  f : collectExts f
+
+-- | Look up a known special function's Extension by name, for use in
+-- collectExts. Errors if the name isn't in knownSpecial -- this
+-- should never happen for the five names used above, since they are
+-- registered there directly.
+specialExt :: String -> Expr -> Extension
+specialExt name arg = case lookupSpecial name arg of
+  Just ext -> ext
+  Nothing  -> error ("specialExt: unknown special function " ++ name)
 
 -- | Check if an expression is in the base field ℂ(x)
 isBaseField :: String -> Expr -> Bool

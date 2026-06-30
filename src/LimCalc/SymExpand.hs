@@ -96,6 +96,11 @@ symExpand (Pow _ _) _ = Left $ Unknown "Symbolic exponents not yet supported"
 
 -- Abs
 symExpand (Abs _) _ = Left $ Unknown "Abs not yet implemented"
+symExpand (Erf _) _ = Left $ Unknown "Erf expansion not yet implemented"
+symExpand (Li _)  _ = Left $ Unknown "Li expansion not yet implemented"
+symExpand (Si _)  _ = Left $ Unknown "Si expansion not yet implemented"
+symExpand (Ci _)  _ = Left $ Unknown "Ci expansion not yet implemented"
+symExpand (Ei _)  _ = Left $ Unknown "Ei expansion not yet implemented"
 
 -- | How many terms
 depth :: Int

@@ -20,6 +20,11 @@ data Expr
   | Log Expr            -- ^ Natural logarithm
   | Sin Expr            -- ^ Sine
   | Cos Expr            -- ^ Cosine
+  | Erf Expr            -- ^ Error function: (2/sqrt(pi)) * integral_0^x e^(-t^2) dt
+  | Li Expr             -- ^ Logarithmic integral: integral_0^x dt/log(t)
+  | Si Expr             -- ^ Sine integral: integral_0^x sin(t)/t dt
+  | Ci Expr             -- ^ Cosine integral: -integral_x^infinity cos(t)/t dt
+  | Ei Expr             -- ^ Exponential integral: -integral_(-x)^infinity e^(-t)/t dt
   deriving (Show, Eq)
 
 -- | Tangent derived from Sin and Cos.

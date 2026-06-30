@@ -37,6 +37,7 @@ tests = testGroup "limcalc"
   , algNumDegree2Tests
   , qPolyDivisionTests
   , trigIntegrationTests
+  , specialFunctionTests
   ]
 
 -- | Helper: expand at a point
@@ -621,4 +622,53 @@ trigIntegrationTests = testGroup "Trig integration via exponential extension"
       case rischIntegrate (Div (Const 1) (Add (Pow (Var "x") (Const 2)) (Const 1))) "x" of
         NonElementary -> return ()
         other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
+  ]
+
+------------------------------------------------------------------------
+-- Special function recognition (erf, li, Si, Ci, Ei)
+------------------------------------------------------------------------
+
+specialFunctionTests :: TestTree
+specialFunctionTests = testGroup "Special function recognition"
+  [ testCase "int e^(-x^2) dx = (sqrt(pi)/2) * erf(x)" $
+      rischIntegrate (Exp (Neg (Pow (Var "x") (Const 2)))) "x"
+        @?= Elementary (Mul (Div (Pow Pi (Const 0.5)) (Const 2.0)) (Erf (Var "x")))
+
+  , testCase "int e^(x^2) dx is still NonElementary (negative control: \
+             \confirms the erf pattern match doesn't over-fire on the \
+             \positive-exponent case, which has no classical closed form)" $
+      rischIntegrate (Exp (Pow (Var "x") (Const 2))) "x"
+        @?= NonElementary
+
+  , testCase "int 1/log(x) dx = li(x)" $
+      rischIntegrate (Div (Const 1) (Log (Var "x"))) "x"
+        @?= Elementary (Li (Var "x"))
+
+  , testCase "int sin(x)/x dx = Si(x)" $
+      rischIntegrate (Div (Sin (Var "x")) (Var "x")) "x"
+        @?= Elementary (Si (Var "x"))
+
+  , testCase "int cos(x)/x dx = Ci(x)" $
+      rischIntegrate (Div (Cos (Var "x")) (Var "x")) "x"
+        @?= Elementary (Ci (Var "x"))
+
+  , testCase "int e^x/x dx = Ei(x)" $
+      rischIntegrate (Div (Exp (Var "x")) (Var "x")) "x"
+        @?= Elementary (Ei (Var "x"))
+
+  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase \
+             \(DiffField.hs; NOT via diff/Calculus.hs, which goes \
+             \through symExpand -- deliberately left unimplemented \
+             \for these, since full Taylor expansion is separate, \
+             \unstarted work)" $ do
+      simplify (deriveBase (Erf (Var "x")))
+        @?= simplify (Mul (Div (Const 2.0) (Pow Pi (Const 0.5))) (Exp (Neg (Mul (Var "x") (Var "x")))))
+      simplify (deriveBase (Li (Var "x")))
+        @?= simplify (Div (Const 1.0) (Log (Var "x")))
+      simplify (deriveBase (Si (Var "x")))
+        @?= simplify (Div (Sin (Var "x")) (Var "x"))
+      simplify (deriveBase (Ci (Var "x")))
+        @?= simplify (Div (Cos (Var "x")) (Var "x"))
+      simplify (deriveBase (Ei (Var "x")))
+        @?= simplify (Div (Exp (Var "x")) (Var "x"))
   ]

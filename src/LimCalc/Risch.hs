@@ -20,6 +20,56 @@ data RischResult
 -- | Top-level Risch integration
 rischIntegrate :: Expr -> String -> RischResult
 rischIntegrate f var =
+  case recognizeSpecialIntegral f var of
+    Just result -> result
+    Nothing -> rischIntegrateClassified f var
+
+-- | Recognize the five classical integrals whose antiderivatives are
+-- the standard non-elementary special functions, returning the
+-- closed form directly rather than falling through to NonElementary.
+--
+-- These don't fit cleanly into the existing classification scheme:
+--   - 1/log(x) doesn't match isLogForm (which only recognizes
+--     Log f, g*log(f), or log(f)*g -- not log(f) as a denominator).
+--   - sin(x)/x, cos(x)/x, e^x/x are classified as TrigCase or
+--     ExponentialCase via hasTrig/isExpForm's Div clauses, but
+--     exprToTrigRatFun and the exponential-case machinery only
+--     handle sin/cos/exp combined arithmetically with EACH OTHER,
+--     not divided by the bare integration variable itself.
+--
+-- Scoped specifically to the argument being the bare integration
+-- variable (e.g. sin(x)/x, not sin(2x)/x) -- the classical special
+-- functions are defined for f(x)/x with the SAME variable in the
+-- numerator's argument and the denominator, and generalizing beyond
+-- that (e.g. via substitution) is a separate piece of work.
+recognizeSpecialIntegral :: Expr -> String -> Maybe RischResult
+recognizeSpecialIntegral f var =
+  case f of
+    -- int e^(-x^2) dx = (sqrt(pi)/2) * erf(x)
+    Exp (Neg (Pow (Var v) (Const 2))) | v == var ->
+      Just $ Elementary $ simplify $
+        Mul (Div (Pow Pi (Const 0.5)) (Const 2)) (Erf (Var var))
+
+    -- int 1/log(x) dx = li(x)
+    Div (Const 1) (Log (Var v)) | v == var ->
+      Just $ Elementary (Li (Var var))
+
+    -- int sin(x)/x dx = Si(x)
+    Div (Sin (Var v)) (Var v') | v == var && v' == var ->
+      Just $ Elementary (Si (Var var))
+
+    -- int cos(x)/x dx = Ci(x)
+    Div (Cos (Var v)) (Var v') | v == var && v' == var ->
+      Just $ Elementary (Ci (Var var))
+
+    -- int e^x/x dx = Ei(x)
+    Div (Exp (Var v)) (Var v') | v == var && v' == var ->
+      Just $ Elementary (Ei (Var var))
+
+    _ -> Nothing
+
+rischIntegrateClassified :: Expr -> String -> RischResult
+rischIntegrateClassified f var =
   case classifyIntegrand f var of
     RationalCase rf ->
       let field = baseField var

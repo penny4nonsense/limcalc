@@ -135,6 +135,18 @@ expand (Abs f) point var = do
                       then Right sf
                       else Right $ scaleSeries (negate algOne) sf
 
+-- | Local Puiseux expansion of erf/li/Si/Ci/Ei is not yet
+-- implemented -- these are currently only produced as Risch
+-- integration results (see Risch.hs's special-function recognition),
+-- not locally expandable. Explicit Unknown errors here rather than
+-- leaving the pattern incomplete (which would crash) or silently
+-- producing wrong output.
+expand (Erf _) _ _ = Left $ Unknown "Erf expansion not yet implemented"
+expand (Li _)  _ _ = Left $ Unknown "Li expansion not yet implemented"
+expand (Si _)  _ _ = Left $ Unknown "Si expansion not yet implemented"
+expand (Ci _)  _ _ = Left $ Unknown "Ci expansion not yet implemented"
+expand (Ei _)  _ _ = Left $ Unknown "Ei expansion not yet implemented"
+
 -- | True if r is a positive integer (denominator 1, numerator > 0).
 isPositiveIntegerExp :: Rational -> Bool
 isPositiveIntegerExp r = denominator r == 1 && numerator r > 0
