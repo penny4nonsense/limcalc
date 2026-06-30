@@ -100,9 +100,6 @@ symExpand (Pow _ _) _ = Left $ Unknown "Symbolic exponents not yet supported"
 symExpand (Abs _) _ = Left $ Unknown "Abs not yet implemented"
 
 -- Erf: analytic everywhere, Taylor series via iterated derivatives
--- erf(c0 + h) = erf(c0) + erf'(c0)h + erf''(c0)h^2/2 + ...
--- where erf^(n)(x) = (2/sqrt(pi)) * H_{n-1}(x) * e^(-x^2)
--- (Hermite polynomial coefficients), computed via deriveBase.
 symExpand (Erf f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -110,8 +107,7 @@ symExpand (Erf f) var = do
       s  = erfSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Si: analytic everywhere (Si(0)=0), Taylor series via iterated
--- derivatives. Si^(0)=Si(x), Si^(1)=sin(x)/x, Si^(n) via chain rule.
+-- Si: analytic everywhere (Si(0)=0), Taylor series via iterated derivatives
 symExpand (Si f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -119,11 +115,7 @@ symExpand (Si f) var = do
       s  = siSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Li, Ci, Ei: singular at the natural expansion point (li(x) and
--- Ci(x) have logarithmic singularities; Ei(x) is singular at 0).
--- Full Puiseux expansion would require logarithmic terms similar to
--- how Log is handled, but the Taylor coefficient structure is more
--- complex (involving li/Ci/Ei themselves). Not yet implemented.
+-- Li, Ci, Ei: singular at natural expansion points
 symExpand (Li _)  _ = Left $ Unknown
   "Li (logarithmic integral) expansion not yet implemented: \
   \li(x) has a logarithmic singularity at x=0 and x=1"
@@ -222,17 +214,11 @@ logSymTaylor x = SymPuiseuxSeries $ take depth $
       in Div sign (Mul factor xpow)
 
 -- | Symbolic Taylor series for erf around symbolic x.
--- erf(x + h) = erf(x) + erf'(x)h + erf''(x)h^2/2! + ...
--- The n-th derivative is computed by iterating deriveBase.
--- Coefficients grow in size for large n due to the Hermite polynomial
--- structure, but remain correct and work well for the primary use
--- case of diff (Erf f) var (which only needs the n=1 coefficient).
 erfSymTaylor :: Expr -> SymPuiseuxSeries
 erfSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (erfSymCoeff n)
   | n <- [0..] :: [Int] ]
   where
-    -- Memoized list of nth derivatives: [erf(x), erf'(x), erf''(x), ...]
     derivs = iterate (\e -> simplify (deriveBase e)) (Erf x)
     erfSymCoeff 0 = Erf x
     erfSymCoeff n =
@@ -242,8 +228,6 @@ erfSymTaylor x = SymPuiseuxSeries $ take depth
       in if factor == 1 then d else Div d (Const factor)
 
 -- | Symbolic Taylor series for Si around symbolic x.
--- Si(x + h) = Si(x) + Si'(x)h + Si''(x)h^2/2! + ...
--- Si'(x) = sin(x)/x, subsequent derivatives via iterating deriveBase.
 siSymTaylor :: Expr -> SymPuiseuxSeries
 siSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (siSymCoeff n)
@@ -256,6 +240,8 @@ siSymTaylor x = SymPuiseuxSeries $ take depth
           facts  = scanl (*) 1 [1..] :: [Int]
           factor = fromIntegral (facts !! n)
       in if factor == 1 then d else Div d (Const factor)
+
+-- | Invert a symbolic series: 1/s via geometric series
 symInvertSeries :: SymPuiseuxSeries -> SymPuiseuxSeries
 symInvertSeries s =
   case symLeadingTerm s of

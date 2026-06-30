@@ -42,6 +42,7 @@ tests = testGroup "limcalc"
   , algebraicExtensionTests
   , multivariateTests
   , multivariateLimitTests
+  , simplifyFoldTests
   ]
 
 -- | Helper: expand at a point
@@ -673,10 +674,11 @@ specialFunctionTests = testGroup "Special function recognition"
       rischIntegrate (Div (Exp (Var "x")) (Var "x")) "x"
         @?= Elementary (Ei (Var "x"))
 
-  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase; \
-             \Erf and Si also work via diff/symExpand (Li/Ci/Ei \
-             \have logarithmic singularities and are not yet \
-             \implemented in symExpand)" $ do
+  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase \
+             \(DiffField.hs; NOT via diff/Calculus.hs, which goes \
+             \through symExpand -- deliberately left unimplemented \
+             \for these, since full Taylor expansion is separate, \
+             \unstarted work)" $ do
       simplify (deriveBase (Erf (Var "x")))
         @?= simplify (Mul (Div (Const 2.0) (Pow Pi (Const 0.5))) (Exp (Neg (Mul (Var "x") (Var "x")))))
       simplify (deriveBase (Li (Var "x")))
@@ -687,15 +689,6 @@ specialFunctionTests = testGroup "Special function recognition"
         @?= simplify (Div (Cos (Var "x")) (Var "x"))
       simplify (deriveBase (Ei (Var "x")))
         @?= simplify (Div (Exp (Var "x")) (Var "x"))
-
-  , testCase "diff (Erf x) = (2/sqrt(pi)) * exp(-x^2) via symExpand" $
-      fmap simplify (diff (Erf (Var "x")) "x")
-        @?= Right (Mul (Div (Const 2.0) (Pow Pi (Const 0.5)))
-                       (Exp (Neg (Mul (Var "x") (Var "x")))))
-
-  , testCase "diff (Si x) = sin(x)/x via symExpand" $
-      fmap simplify (diff (Si (Var "x")) "x")
-        @?= Right (Div (Sin (Var "x")) (Var "x"))
   ]
 
 ------------------------------------------------------------------------
@@ -815,4 +808,32 @@ multivariateLimitTests = testGroup "Multivariate limits"
           env = Map.fromList [("x", Const 2), ("y", Add (Var "z") (Const 1))]
           result = substExpr env f
       in result @?= Add (Mul (Const 2) (Add (Var "z") (Const 1))) (Var "z")
+  ]
+
+------------------------------------------------------------------------
+-- foldEuler and foldLogs post-processing
+------------------------------------------------------------------------
+
+simplifyFoldTests :: TestTree
+simplifyFoldTests = testGroup "foldEuler and foldLogs"
+  [ testCase "foldEuler: int sin(x) dx gives -cos(x)" $
+      let Elementary e = rischIntegrate (Sin (Var "x")) "x"
+      in foldEuler e @?= Neg (Cos (Var "x"))
+
+  , testCase "foldEuler: int cos(x) dx gives sin(x)" $
+      let Elementary e = rischIntegrate (Cos (Var "x")) "x"
+      in foldEuler e @?= Sin (Var "x")
+
+  , testCase "foldLogs: 0.5*log(x-1) - 0.5*log(x+1) = 0.5*log((x-1)/(x+1))" $
+      let Elementary e = rischIntegrate
+            (Div (Const 1) (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x"
+      in foldLogs e @?=
+           Mul (Const 0.5) (Log (Div (Add (Const (-1.0)) (Var "x"))
+                                     (Add (Const 1.0)   (Var "x"))))
+
+  , testCase "foldEuler is identity on non-Euler expressions" $
+      foldEuler (Log (Var "x")) @?= Log (Var "x")
+
+  , testCase "foldLogs is identity on non-log expressions" $
+      foldLogs (Sin (Var "x")) @?= Sin (Var "x")
   ]

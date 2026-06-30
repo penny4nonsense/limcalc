@@ -148,3 +148,142 @@ simplifyNeg x                    = Neg x
 notConst :: Expr -> Bool
 notConst (Const _) = False
 notConst _         = True
+
+------------------------------------------------------------------------
+-- Euler folding: convert e^(i*theta) expressions back to sin/cos
+------------------------------------------------------------------------
+
+-- | Fold Euler-form expressions into sin/cos wherever possible.
+-- Called explicitly after Risch integration to produce human-readable
+-- output, rather than as part of the simplifyOnce fixed-point loop
+-- (which would make every simplification aware of trig forms).
+--
+-- Recognizes two patterns in Add nodes:
+--   c * e^(i*theta) + c * e^(i*theta)^(-1) = 2c * cos(theta)
+--   (-c*i) * e^(i*theta) + (c*i) * e^(i*theta)^(-1) = 2c * sin(theta)
+foldEuler :: Expr -> Expr
+foldEuler expr = simplify (foldEulerOnce expr)
+
+foldEulerOnce :: Expr -> Expr
+foldEulerOnce (Add a b) =
+  case tryFoldEulerPair (foldEulerOnce a) (foldEulerOnce b) of
+    Just folded -> folded
+    Nothing     -> Add (foldEulerOnce a) (foldEulerOnce b)
+foldEulerOnce (Sub a b) = Sub (foldEulerOnce a) (foldEulerOnce b)
+foldEulerOnce (Mul a b) = Mul (foldEulerOnce a) (foldEulerOnce b)
+foldEulerOnce (Div a b) = Div (foldEulerOnce a) (foldEulerOnce b)
+foldEulerOnce (Neg a)   = Neg (foldEulerOnce a)
+foldEulerOnce (Pow a b) = Pow (foldEulerOnce a) (foldEulerOnce b)
+foldEulerOnce e         = e
+
+-- | Try to recognize a pair of terms as an Euler identity.
+-- Returns Just (sin/cos form) if recognized, Nothing otherwise.
+tryFoldEulerPair :: Expr -> Expr -> Maybe Expr
+tryFoldEulerPair a b = do
+  (ca, ta, na) <- extractEulerTerm a
+  (cb, tb, nb) <- extractEulerTerm b
+  -- Terms must share the same base t = e^(i*theta)
+  if ta /= tb then Nothing
+  else if na == 1 && nb == -1
+    -- ca*t + cb*t^(-1): check for cos pattern (ca == cb, both real)
+    -- or sin pattern (ca == -cb, both imaginary)
+    then tryFoldCosOrSin ca cb ta
+  else if na == -1 && nb == 1
+    then tryFoldCosOrSin cb ca ta
+  else Nothing
+
+-- | Extract (coefficient, base-exp-arg, power) from an Euler term.
+-- Recognizes:
+--   c * Exp(f)       -> (c, f, 1)
+--   c * Exp(f)^n     -> (c, f, n)
+--   c * I * Exp(f)   -> (c*i, f, 1)   where i = sqrt(-1) ~ (0,1) complex
+-- Returns Nothing for anything not in this form.
+extractEulerTerm :: Expr -> Maybe (Expr, Expr, Double)
+-- Mul (Const c) (Exp f) -> (Const c, f, 1)
+extractEulerTerm (Mul (Const c) (Exp f))         = Just (Const c, f, 1)
+-- Mul (Const c) (Pow (Exp f) (Const n)) -> (Const c, f, n)
+extractEulerTerm (Mul (Const c) (Pow (Exp f) (Const n))) = Just (Const c, f, n)
+-- Mul (Const c) (Mul I (Exp f)) -> (Const c * I, f, 1)
+extractEulerTerm (Mul (Const c) (Mul I (Exp f))) = Just (Mul (Const c) I, f, 1)
+-- Mul (Const c) (Mul I (Pow (Exp f) (Const n)))
+extractEulerTerm (Mul (Const c) (Mul I (Pow (Exp f) (Const n)))) =
+  Just (Mul (Const c) I, f, n)
+extractEulerTerm _ = Nothing
+
+-- | Given coefficients ca, cb for terms t and t^(-1), try to fold
+-- into cos or sin using Euler's formula.
+tryFoldCosOrSin :: Expr -> Expr -> Expr -> Maybe Expr
+tryFoldCosOrSin ca cb base
+  -- Cosine pattern: ca == cb (same real coefficient)
+  -- ca*e^(i*theta) + ca*e^(-i*theta) = 2ca*cos(theta)
+  | ca == cb, Just (Const c) <- pure ca, Just theta <- extractITheta base =
+      Just (simplify (Mul (Const (2 * c)) (Cos theta)))
+  -- Sine pattern: ca = -c*I, cb = c*I (imaginary, opposite signs)
+  -- (-c*i)*e^(i*theta) + (c*i)*e^(-i*theta) = 2c*sin(theta)
+  | Just (Const c) <- extractRealFromIMul cb
+  , Just (Const c') <- extractRealFromIMul ca
+  , c == -c'
+  , Just theta <- extractITheta base =
+      Just (simplify (Mul (Const (2 * c)) (Sin theta)))
+  | otherwise = Nothing
+
+-- | Extract theta from I*theta (the argument to e^(i*theta)).
+-- Returns Just theta if the expression is Mul I theta, Nothing otherwise.
+extractITheta :: Expr -> Maybe Expr
+extractITheta (Mul I theta)     = Just theta
+extractITheta (Mul theta I)     = Just theta
+extractITheta _                 = Nothing
+
+-- | Extract the real scalar c from c*I expressions.
+extractRealFromIMul :: Expr -> Maybe Expr
+extractRealFromIMul (Mul (Const c) I) = Just (Const c)
+extractRealFromIMul (Mul I (Const c)) = Just (Const c)
+extractRealFromIMul _                 = Nothing
+
+------------------------------------------------------------------------
+-- Log-law simplification
+------------------------------------------------------------------------
+
+-- | Apply log laws to simplify expressions involving logarithms.
+-- Called explicitly after Risch integration.
+--   c*log(a) + d*log(b) -> various simplifications
+--   c*log(a) -> log(a^c)  when c is rational
+foldLogs :: Expr -> Expr
+foldLogs = simplify . foldLogsOnce
+
+foldLogsOnce :: Expr -> Expr
+foldLogsOnce (Add a b) =
+  case tryFoldLogPair (foldLogsOnce a) (foldLogsOnce b) of
+    Just folded -> folded
+    Nothing     -> Add (foldLogsOnce a) (foldLogsOnce b)
+foldLogsOnce (Sub a b) =
+  case tryFoldLogPair (foldLogsOnce a) (Neg (foldLogsOnce b)) of
+    Just folded -> folded
+    Nothing     -> Sub (foldLogsOnce a) (foldLogsOnce b)
+foldLogsOnce (Mul a b) = Mul (foldLogsOnce a) (foldLogsOnce b)
+foldLogsOnce (Div a b) = Div (foldLogsOnce a) (foldLogsOnce b)
+foldLogsOnce (Neg a)   = Neg (foldLogsOnce a)
+foldLogsOnce e         = e
+
+-- | Extract (coefficient, log-argument) from a log term.
+-- Recognizes: Log a -> (1, a), Mul (Const c) (Log a) -> (c, a),
+-- Neg (Log a) -> (-1, a), Neg (Mul (Const c) (Log a)) -> (-c, a)
+extractLogTerm :: Expr -> Maybe (Double, Expr)
+extractLogTerm (Log a)                    = Just (1, a)
+extractLogTerm (Mul (Const c) (Log a))   = Just (c, a)
+extractLogTerm (Neg (Log a))             = Just (-1, a)
+extractLogTerm (Neg (Mul (Const c) (Log a))) = Just (-c, a)
+extractLogTerm _                          = Nothing
+
+-- | Try to fold a pair of log terms using log laws.
+tryFoldLogPair :: Expr -> Expr -> Maybe Expr
+tryFoldLogPair a b = do
+  (ca, la) <- extractLogTerm a
+  (cb, lb) <- extractLogTerm b
+  if ca == cb
+    -- c*log(a) + c*log(b) = c*log(a*b)
+    then Just (simplify (Mul (Const ca) (Log (Mul la lb))))
+  else if ca == -cb
+    -- c*log(a) - c*log(b) = c*log(a/b)
+    then Just (simplify (Mul (Const ca) (Log (Div la lb))))
+  else Nothing
