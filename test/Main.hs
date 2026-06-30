@@ -20,6 +20,7 @@ import LimCalc.Types
 import LimCalc.AlgNum
 import LimCalc.QPoly
 import LimCalc.BivPoly
+import LimCalc.MultivariateLimit
 
 main :: IO ()
 main = defaultMain tests
@@ -40,6 +41,7 @@ tests = testGroup "limcalc"
   , specialFunctionTests
   , algebraicExtensionTests
   , multivariateTests
+  , multivariateLimitTests
   ]
 
 -- | Helper: expand at a point
@@ -763,4 +765,46 @@ multivariateTests = testGroup "Multivariate calculus (gradient, Jacobian, Hessia
       let f = Mul (Pow (Var "x") (Const 2)) (Var "y")
       in (partialDiff f "x" >>= \d -> partialDiff d "y")
            @?= Right (Mul (Const 2.0) (Var "x"))
+  ]
+
+------------------------------------------------------------------------
+-- Multivariate limits
+------------------------------------------------------------------------
+
+multivariateLimitTests :: TestTree
+multivariateLimitTests = testGroup "Multivariate limits"
+  [ testCase "lim (x,y)->(0,0) of x^2+y^2 = 0 (exists)" $
+      let f = Add (Pow (Var "x") (Const 2)) (Pow (Var "y") (Const 2))
+      in multivariateLimit f ["x","y"] [0,0] @?= MVExists 0.0
+
+  , testCase "lim (x,y)->(1,2) of x^2+y = 3 (exists, non-origin)" $
+      let f = Add (Pow (Var "x") (Const 2)) (Var "y")
+      in multivariateLimit f ["x","y"] [1,2] @?= MVExists 3.0
+
+  , testCase "lim (x,y)->(0,0) of x*y/(x^2+y^2) does not exist" $
+      let f = Div (Mul (Var "x") (Var "y"))
+                  (Add (Pow (Var "x") (Const 2)) (Pow (Var "y") (Const 2)))
+      in case multivariateLimit f ["x","y"] [0,0] of
+           MVDoesNotExist _ -> return ()
+           other -> assertFailure $ "Expected MVDoesNotExist, got: " ++ show other
+
+  , testCase "lim (x,y)->(0,0) of x^2*y/(x^4+y^2) does not exist \
+             \(pathological: 0 on every line but 1/2 on y=x^2)" $
+      let f = Div (Mul (Pow (Var "x") (Const 2)) (Var "y"))
+                  (Add (Pow (Var "x") (Const 4)) (Pow (Var "y") (Const 2)))
+      in case multivariateLimit f ["x","y"] [0,0] of
+           MVDoesNotExist _ -> return ()
+           other -> assertFailure $ "Expected MVDoesNotExist, got: " ++ show other
+
+  , testCase "lim (x,y)->(0,0) of sin(x*y)/(x*y) = 1 \
+             \(paths through singularity are skipped)" $
+      let f = Div (Sin (Mul (Var "x") (Var "y")))
+                  (Mul (Var "x") (Var "y"))
+      in multivariateLimit f ["x","y"] [0,0] @?= MVExists 1.0
+
+  , testCase "substExpr replaces variables correctly" $
+      let f = Add (Mul (Var "x") (Var "y")) (Var "z")
+          env = Map.fromList [("x", Const 2), ("y", Add (Var "z") (Const 1))]
+          result = substExpr env f
+      in result @?= Add (Mul (Const 2) (Add (Var "z") (Const 1))) (Var "z")
   ]
