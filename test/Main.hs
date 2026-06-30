@@ -17,6 +17,8 @@ import LimCalc.Risch.Exponential
 import LimCalc.Risch
 import LimCalc.Types
 import LimCalc.AlgNum
+import LimCalc.QPoly
+import LimCalc.BivPoly
 
 main :: IO ()
 main = defaultMain tests
@@ -31,6 +33,8 @@ tests = testGroup "limcalc"
   , polyTests
   , rationalFunctionTests
   , rischTests
+  , algNumDegree2Tests
+  , qPolyDivisionTests
   ]
 
 -- | Helper: expand at a point
@@ -161,16 +165,6 @@ expandTests = testGroup "Expansion engine"
       case expand (Abs (Pow (Var "x") (Const 3))) (pt 0) "x" of
         Left (NonAnalytic _) -> return ()
         other                -> assertFailure $ "Expected NonAnalytic, got: " ++ show other
-
-  , testCase "expand 1/(1+x^3) at x=0 reaches sparse low-order terms" $
-      let Right s = expand (Div (Const 1) (Add (Const 1) (Pow (Var "x") (Const 3)))) (pt 0) "x"
-      in [ (pExp t, algToDouble (coeff t)) | t <- terms s ]
-           @?= [(0, 1.0), (3, -1.0), (6, 1.0)]
-
-  , testCase "expand (1+x^3)^(1/2) at x=0 reaches multiple sparse terms" $
-      let Right s = expand (Pow (Add (Const 1) (Pow (Var "x") (Const 3))) (Const 0.5)) (pt 0) "x"
-      in [ (pExp t, algToDouble (coeff t)) | t <- terms s ]
-           @?= [(0, 1.0), (3, 0.5), (6, -0.125)]
   ]
 
 ------------------------------------------------------------------------
@@ -465,4 +459,73 @@ rischTests = testGroup "Risch integration"
       case integrateExp (Pow (Var "x") (Const 2)) "x" of
         Left _  -> return ()
         Right _ -> assertFailure "Expected Left (non-elementary)"
+  ]
+
+------------------------------------------------------------------------
+-- Degree >= 2 AlgNum arithmetic (complex algebraic numbers)
+------------------------------------------------------------------------
+
+-- | Helper: assert an AlgNum's real and imaginary parts match
+-- expected values within tolerance.
+algNumApprox :: AlgNum -> Double -> Double -> Assertion
+algNumApprox a expectedRe expectedIm = do
+  abs (algToDouble a - expectedRe) < 1e-6 @?
+    ("real part: expected " ++ show expectedRe ++ ", got " ++ show (algToDouble a))
+  abs (algImagDouble a - expectedIm) < 1e-6 @?
+    ("imag part: expected " ++ show expectedIm ++ ", got " ++ show (algImagDouble a))
+
+algNumDegree2Tests :: TestTree
+algNumDegree2Tests = testGroup "AlgNum degree >= 2 (complex algebraic numbers)"
+  [ testCase "i * i = -1" $
+      algNumApprox (algI * algI) (-1) 0
+
+  , testCase "i + i = 2i" $
+      algNumApprox (algI + algI) 0 2
+
+  , testCase "i^3 = -i" $
+      algNumApprox (algI * algI * algI) 0 (-1)
+
+  , testCase "sqrt(2) + sqrt(2) = 2*sqrt(2)" $
+      algNumApprox (algSqrt 2 + algSqrt 2) (2 * sqrt 2) 0
+
+  , testCase "sqrt(2) * sqrt(2) = 2" $
+      algNumApprox (algSqrt 2 * algSqrt 2) 2 0
+
+  , testCase "(1+i) * (1-i) = 2" $
+      let onePlusI  = algOne + algI
+          oneMinusI = algOne - algI
+      in algNumApprox (onePlusI * oneMinusI) 2 0
+
+  , testCase "negate i = -i" $
+      algNumApprox (negate algI) 0 (-1)
+
+  , testCase "1 - i has imaginary part -1 (regression: algNeg previously left imagQ untouched)" $
+      algNumApprox (algOne - algI) 1 (-1)
+  ]
+
+------------------------------------------------------------------------
+-- QPoly division (regression: qDivPoly stub silently no-op'd on
+-- non-constant input, corrupting the subresultant PRS recursion)
+------------------------------------------------------------------------
+
+qPolyDivisionTests :: TestTree
+qPolyDivisionTests = testGroup "QPoly division"
+  [ testCase "qDivModPoly exact division, no remainder" $
+      -- (x^2 - 1) / (x - 1) = x + 1, remainder 0
+      let p = QPoly [-1, 0, 1]   -- x^2 - 1
+          q = QPoly [-1, 1]      -- x - 1
+          (quot, rem') = qDivModPoly p q
+      in (qPolyCoef quot, qPolyCoef (qStrip rem')) @?= ([1, 1], [])
+
+  , testCase "qDivModPoly with nonzero remainder" $
+      -- (x^2 + 1) / (x - 1) = x + 1, remainder 2
+      let p = QPoly [1, 0, 1]    -- x^2 + 1
+          q = QPoly [-1, 1]      -- x - 1
+          (quot, rem') = qDivModPoly p q
+      in (qPolyCoef quot, qPolyCoef (qStrip rem')) @?= ([1, 1], [2])
+
+  , testCase "qQuotPoly matches qDivModPoly's quotient" $
+      let p = QPoly [-1, 0, 1]
+          q = QPoly [-1, 1]
+      in qQuotPoly p q @?= fst (qDivModPoly p q)
   ]

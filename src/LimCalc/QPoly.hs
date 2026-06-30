@@ -123,3 +123,62 @@ qDiffPoly (QPoly cs) =
 qPow :: QPoly -> Int -> QPoly
 qPow _ 0 = QPoly [1]
 qPow p n = qMulPoly p (qPow p (n-1))
+
+-- | Num instance for QPoly, wrapping the existing qAddPoly/qMulPoly/
+-- etc. This lets QPoly be used as a coefficient ring with generic
+-- polynomial machinery (e.g. Poly.hs's Poly a / resultant), rather
+-- than requiring a parallel, hand-rolled bivariate implementation.
+instance Num QPoly where
+  (+)         = qAddPoly
+  (*)         = qMulPoly
+  negate      = qNegPoly
+  abs p       = p  -- magnitude isn't meaningful for a polynomial;
+                    -- only used incidentally by generic code paths
+                    -- that don't actually rely on it for QPoly
+  signum _    = QPoly [1]
+  fromInteger n = QPoly [fromInteger n]
+
+-- | Fractional instance for QPoly. Division here is REAL polynomial
+-- division (via qDivModPoly), discarding the remainder -- this is
+-- only exact when the division is known to be exact by construction
+-- (as in the subresultant/resultant algorithms that motivated this
+-- instance). Using '/' on QPolys where the division isn't exact will
+-- silently drop a remainder; prefer qDivModPoly directly when that
+-- matters.
+instance Fractional QPoly where
+  p / q        = qQuotPoly p q
+  fromRational r = QPoly [r]
+
+-- | Euclidean division of QPolys: (quotient, remainder).
+--
+-- Mirrors Poly.divModPoly exactly. Needed because BivPoly's
+-- subresultant algorithm divides by genuinely non-constant QPoly
+-- leading coefficients (since BivPoly's own coefficients are QPolys
+-- in x), which the previous qDivPoly stub silently failed to handle
+-- -- it only worked for two degree-0 QPolys and otherwise returned
+-- its numerator unchanged, corrupting the subresultant PRS recursion
+-- and causing it to fail to terminate properly.
+qDivModPoly :: QPoly -> QPoly -> (QPoly, QPoly)
+qDivModPoly p q
+  | qDegree q < 0          = error "qDivModPoly: division by zero QPoly"
+  | qDegree p < qDegree q  = (QPoly [], p)
+  | otherwise              = go p (QPoly [])
+  where
+    lc = qLeadingCoeff q
+    dq = qDegree q
+    go r acc
+      | qDegree r < dq = (acc, r)
+      | otherwise =
+          let scale = qLeadingCoeff r / lc
+              deg   = qDegree r - dq
+              term  = QPoly (replicate deg 0 ++ [scale])
+              r'    = qStrip $ qSubPoly r (qMulPoly term q)
+          in go r' (qAddPoly acc term)
+
+-- | Quotient only.
+qQuotPoly :: QPoly -> QPoly -> QPoly
+qQuotPoly p q = fst (qDivModPoly p q)
+
+-- | Remainder only.
+qRemPoly :: QPoly -> QPoly -> QPoly
+qRemPoly p q = snd (qDivModPoly p q)
