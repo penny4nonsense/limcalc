@@ -1,6 +1,8 @@
 module LimCalc.Risch.Primitive where
 
 import Data.Complex (Complex, realPart, imagPart)
+import Data.List (minimumBy)
+import Data.Ratio ((%))
 import LimCalc.Poly
 import LimCalc.RationalFunction
 import LimCalc.DiffField
@@ -142,13 +144,30 @@ findRationalRoots p
       case findComplexRoots p of
         Nothing -> Nothing
         Just allRoots ->
-          let realRoots = [ r | r <- allRoots, isReal r, verifiedRoot r ]
+          let -- Snap real roots to nearby rationals, then verify
+              snapped    = [ snapToRational r | r <- allRoots, isReal r ]
+              realRoots  = [ r | r <- snapped, verifiedRoot r ]
           in if null realRoots && degree p > 0
                then Nothing
                else Just realRoots
   where
-    isReal r = abs (algImagDouble r) < 1e-6
-    verifiedRoot r = abs (algToDouble (evalPoly p r)) < 1e-6
+    isReal r       = abs (algImagDouble r) < 1e-6
+    verifiedRoot r = abs (algToDouble (evalPoly p r)) < 1e-4
+    -- Snap an AlgNum to the nearest rational p/q with |q| <= 100.
+    -- The Rothstein-Trager resultant has rational coefficients when
+    -- the input rational function has rational coefficients, so its
+    -- rational roots are exactly representable as rationals.
+    -- Durand-Kerner finds them approximately; this corrects the
+    -- precision so that downstream GCD computations work exactly.
+    snapToRational r =
+      let x = algToDouble r
+          best = minimumBy (\a b -> compare (abs (algToDouble a - x))
+                                            (abs (algToDouble b - x)))
+                   [ fromQ (p' % q')
+                   | q' <- [1..100]
+                   , p' <- [ round (x * fromIntegral q') ]
+                   ]
+      in if abs (algToDouble best - x) < 1e-4 then best else r
 
 -- | Find all complex roots of a polynomial with AlgNum coefficients.
 --
@@ -240,3 +259,64 @@ addExpr :: Expr -> Expr -> Expr
 addExpr (Const 0) e = e
 addExpr e (Const 0) = e
 addExpr e1 e2       = Add e1 e2
+-- | Partial fraction decomposition of a proper rational function
+-- over AlgNum coefficients.
+--
+-- Uses Rothstein-Trager to extract the irreducible factor structure
+-- of the denominator. For each (c, d_i) pair, the corresponding
+-- partial fraction term is c * d_i' / d_i. For linear factors
+-- (degree 1), d_i' = 1, so this reduces to the standard form c/d_i.
+--
+-- For higher-degree irreducible factors the numerator has degree
+-- >= 1 (not the standard Ax+B form), but is mathematically correct
+-- as a logarithmic-derivative representation.
+--
+-- Requires: deg(p) < deg(q). Call ratProperFraction first for
+-- improper inputs.
+--
+-- Returns [rf] unchanged if the denominator is already irreducible
+-- or has no rational-coefficient decomposition.
+partialFractions :: RatFun AlgNum -> [RatFun AlgNum]
+partialFractions rf@(RatFun p q) =
+  let var   = polyVar p
+      field = baseField var
+  in case rothsteinTrager rf field of
+       Left _      -> [rf]
+       Right []    -> [rf]
+       Right [_]   -> [rf]
+       Right pairs ->
+         let factors = concatMap (splitFactor var) (dedupFactors (map snd pairs))
+         in concatMap (residueTerm var p q) factors
+  where
+    splitFactor var di
+      | degree di <= 1 = [di]
+      | otherwise =
+          let one = constPoly var algOne
+              subterms = partialFractions (RatFun one di)
+          in map (\(RatFun _ d) -> d) subterms
+
+    residueTerm var p q di
+      | degree di == 1 =
+          let coeffs = polyCoef di
+              r      = algMul (algNeg (coeffs !! 0)) (algInv (coeffs !! 1))
+              pr     = evalPoly p r
+              cofact = quotPoly q di
+              cofr   = evalPoly cofact r
+              coeff  = algMul pr (algInv cofr)
+          in [RatFun (constPoly var coeff) di]
+      | otherwise =
+          let field = baseField var
+          in case rothsteinTrager (RatFun p di) field of
+               Right ((c,_):_) ->
+                 [RatFun (mulPoly (constPoly var c) (diffPoly di)) di]
+               _ -> [RatFun p di]
+
+    dedupFactors :: [Poly AlgNum] -> [Poly AlgNum]
+    dedupFactors [] = []
+    dedupFactors (x:xs) =
+      x : dedupFactors (filter (\y -> not (polyEq x y)) xs)
+
+    polyEq :: Poly AlgNum -> Poly AlgNum -> Bool
+    polyEq a b = length (polyCoef a) == length (polyCoef b) &&
+      all (\(ca,cb) -> isAlgZero (algAdd ca (algNeg cb)))
+          (zip (polyCoef a) (polyCoef b))

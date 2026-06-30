@@ -122,11 +122,9 @@ extGCD a b
           s'        = subPoly t (mulPoly q s)
       in (g, t, s')
 
--- | Partial fractions (stub)
-partialFractions :: (Fractional a, Eq a) => RatFun a -> [RatFun a]
-partialFractions rf@(RatFun p q) =
-  let factors = squarefree q
-  in case factors of
-       []  -> [rf]
-       [_] -> [rf]
-       _   -> [rf]
+-- | Partial fraction decomposition.
+-- Implemented in LimCalc.Risch.Primitive (which has access to
+-- Rothstein-Trager). This stub is kept as documentation only.
+-- Use Risch.Primitive.partialFractions instead.
+partialFractionsStub :: RatFun a -> [RatFun a]
+partialFractionsStub rf = [rf]

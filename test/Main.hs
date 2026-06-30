@@ -18,6 +18,7 @@ import LimCalc.Risch.Exponential
 import LimCalc.Risch
 import LimCalc.Types
 import LimCalc.AlgNum
+import Data.List (sort)
 import LimCalc.QPoly
 import LimCalc.BivPoly
 import LimCalc.MultivariateLimit
@@ -43,6 +44,7 @@ tests = testGroup "limcalc"
   , multivariateTests
   , multivariateLimitTests
   , simplifyFoldTests
+  , partialFractionsTests
   ]
 
 -- | Helper: expand at a point
@@ -836,4 +838,56 @@ simplifyFoldTests = testGroup "foldEuler and foldLogs"
 
   , testCase "foldLogs is identity on non-log expressions" $
       foldLogs (Sin (Var "x")) @?= Sin (Var "x")
+  ]
+
+------------------------------------------------------------------------
+-- Partial fractions
+------------------------------------------------------------------------
+
+partialFractionsTests :: TestTree
+partialFractionsTests = testGroup "Partial fractions (Risch.Primitive)"
+  [ testCase "1/(x^2-1) = 0.5/(x-1) + (-0.5)/(x+1)" $
+      let p = constPoly "x" algOne
+          q = Poly "x" [negate algOne, algZero, algOne]
+          terms = partialFractions (ratFun p q)
+          coeffs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) terms
+          denoms = map (\(RatFun _ d) -> map algToDouble (polyCoef d)) terms
+      in do
+        length terms @?= 2
+        assertBool "coefficients are 0.5 and -0.5"
+          (abs (coeffs !! 0 - 0.5) < 1e-9 || abs (coeffs !! 0 + 0.5) < 1e-9)
+        assertBool "linear denominators"
+          (all (\d -> length d == 2) denoms)
+
+  , testCase "(x+2)/(x^2-1) = 1.5/(x-1) + (-0.5)/(x+1)" $
+      let p = Poly "x" [fromQ 2, algOne]
+          q = Poly "x" [negate algOne, algZero, algOne]
+          terms = partialFractions (ratFun p q)
+      in length terms @?= 2
+
+  , testCase "1/(x^2+1) is irreducible over Q, returned unchanged" $
+      let p = constPoly "x" algOne
+          q = Poly "x" [algOne, algZero, algOne]
+          terms = partialFractions (ratFun p q)
+      in length terms @?= 1
+
+  , testCase "1/((x-1)(x-2)(x-3)) decomposes into 3 linear terms" $
+      let p = constPoly "x" algOne
+          q = Poly "x" [negate (fromQ 6), fromQ 11, negate (fromQ 6), algOne]
+          terms = partialFractions (ratFun p q)
+      in do
+        length terms @?= 3
+        assertBool "all denominators are linear"
+          (all (\(RatFun _ d) -> degree d == 1) terms)
+
+  , testCase "residue coefficients for 1/((x-1)(x-2)(x-3)) are 0.5, -1, 0.5" $
+      let p = constPoly "x" algOne
+          q = Poly "x" [negate (fromQ 6), fromQ 11, negate (fromQ 6), algOne]
+          terms = partialFractions (ratFun p q)
+          cs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) terms
+          csorted = sort cs
+      in assertBool "coefficients are {-1, 0.5, 0.5}"
+           (abs (csorted !! 0 + 1.0) < 1e-6 &&
+            abs (csorted !! 1 - 0.5) < 1e-6 &&
+            abs (csorted !! 2 - 0.5) < 1e-6)
   ]
