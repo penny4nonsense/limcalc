@@ -25,6 +25,11 @@ simplifyOnce (Log f)    = Log (simplifyOnce f)
 simplifyOnce (Sin f)    = Sin (simplifyOnce f)
 simplifyOnce (Cos f)    = Cos (simplifyOnce f)
 simplifyOnce (Abs f)    = Abs (simplifyOnce f)
+simplifyOnce (Erf f)    = Erf (simplifyOnce f)
+simplifyOnce (Li f)     = Li (simplifyOnce f)
+simplifyOnce (Si f)     = Si (simplifyOnce f)
+simplifyOnce (Ci f)     = Ci (simplifyOnce f)
+simplifyOnce (Ei f)     = Ei (simplifyOnce f)
 simplifyOnce e          = e
 
 -- | Simplify addition
@@ -100,6 +105,20 @@ simplifyDiv x (Const 1)          = x
 simplifyDiv (Const a) (Const b)
   | b /= 0                       = Const (a / b)
 simplifyDiv x y | x == y        = Const 1
+-- Push negation inside: -(a/b) handled by simplifyNeg; but
+-- also handle Div(Neg a, b) -> Neg(Div a b) for uniformity,
+-- and cancel double negation in Div(Neg a, Neg b) -> Div a b.
+simplifyDiv (Neg a) (Neg b)      = simplifyDiv a b
+-- Common constant factor in Mul numerator and denominator:
+-- (c*a)/(c*b) -> a/b
+simplifyDiv (Mul (Const c1) a) (Mul (Const c2) b)
+  | c1 == c2 && c1 /= 0         = simplifyDiv a b
+-- (c*a)/c -> a
+simplifyDiv (Mul (Const c1) a) (Const c2)
+  | c1 == c2 && c1 /= 0         = a
+-- c/(c*b) -> 1/b
+simplifyDiv (Const c1) (Mul (Const c2) b)
+  | c1 == c2 && c1 /= 0         = simplifyDiv (Const 1) b
 simplifyDiv x y                  = Div x y
 
 -- | Simplify power
@@ -115,4 +134,10 @@ simplifyPow x y                  = Pow x y
 simplifyNeg :: Expr -> Expr
 simplifyNeg (Const a)            = Const (-a)
 simplifyNeg (Neg x)              = x
+-- Push negation inside division: -(a/b) = (-a)/b
+-- This allows simplifyDiv to fold constants, e.g.
+-- Neg(Div(Const -1, x)) -> Div(Const 1, x)
+simplifyNeg (Div a b)            = simplifyDiv (simplifyNeg a) b
+-- Pull negation into constant factor: -(c*x) = (-c)*x
+simplifyNeg (Mul (Const c) x)   = simplifyMul (Const (-c)) x
 simplifyNeg x                    = Neg x
