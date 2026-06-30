@@ -114,7 +114,7 @@ rischIntegrateClassified f var =
           let theta = Mul I (Var var)
               field = addExtension (baseField var) (Exponential theta)
           in case integrateExponential rf field of
-               ExponentialElementary e   -> Elementary (simplify e)
+               ExponentialElementary e   -> Elementary (foldEuler (simplify e))
                ExponentialNonElementary  -> NonElementary
                ExponentialError msg      -> NotImplemented msg
 
