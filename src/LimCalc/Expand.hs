@@ -146,6 +146,9 @@ expand (Li _)  _ _ = Left $ Unknown "Li expansion not yet implemented"
 expand (Si _)  _ _ = Left $ Unknown "Si expansion not yet implemented"
 expand (Ci _)  _ _ = Left $ Unknown "Ci expansion not yet implemented"
 expand (Ei _)  _ _ = Left $ Unknown "Ei expansion not yet implemented"
+expand (Arcsin _) _ _ = Left $ Unknown "Arcsin expansion not yet implemented"
+expand (Arccos _) _ _ = Left $ Unknown "Arccos expansion not yet implemented"
+expand (Arctan _) _ _ = Left $ Unknown "Arctan expansion not yet implemented"
 
 -- | True if r is a positive integer (denominator 1, numerator > 0).
 isPositiveIntegerExp :: Rational -> Bool

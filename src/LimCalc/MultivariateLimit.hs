@@ -37,6 +37,9 @@ substExpr env (Li f)      = Li  (substExpr env f)
 substExpr env (Si f)      = Si  (substExpr env f)
 substExpr env (Ci f)      = Ci  (substExpr env f)
 substExpr env (Ei f)      = Ei  (substExpr env f)
+substExpr env (Arcsin f)  = Arcsin (substExpr env f)
+substExpr env (Arccos f)  = Arccos (substExpr env f)
+substExpr env (Arctan f)  = Arctan (substExpr env f)
 
 -- | Evaluate the limit of f along a parametric path toward a point.
 --

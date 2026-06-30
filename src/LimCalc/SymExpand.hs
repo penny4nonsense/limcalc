@@ -98,6 +98,9 @@ symExpand (Pow _ _) _ = Left $ Unknown "Symbolic exponents not yet supported"
 
 -- Abs
 symExpand (Abs _) _ = Left $ Unknown "Abs not yet implemented"
+symExpand (Arcsin _) _ = Left $ Unknown "Arcsin expansion not yet implemented"
+symExpand (Arccos _) _ = Left $ Unknown "Arccos expansion not yet implemented"
+symExpand (Arctan _) _ = Left $ Unknown "Arctan expansion not yet implemented"
 
 -- Erf: analytic everywhere, Taylor series via iterated derivatives
 symExpand (Erf f) var = do

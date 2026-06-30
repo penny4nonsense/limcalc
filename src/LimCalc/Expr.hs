@@ -20,6 +20,9 @@ data Expr
   | Log Expr            -- ^ Natural logarithm
   | Sin Expr            -- ^ Sine
   | Cos Expr            -- ^ Cosine
+  | Arcsin Expr         -- ^ Inverse sine
+  | Arccos Expr         -- ^ Inverse cosine
+  | Arctan Expr         -- ^ Inverse tangent
   | Erf Expr            -- ^ Error function: (2/sqrt(pi)) * integral_0^x e^(-t^2) dt
   | Li Expr             -- ^ Logarithmic integral: integral_0^x dt/log(t)
   | Si Expr             -- ^ Sine integral: integral_0^x sin(t)/t dt

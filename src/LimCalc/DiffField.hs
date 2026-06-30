@@ -71,6 +71,18 @@ deriveExpr field (Sin f)     =
   Mul (Cos f) (deriveExpr field f)
 deriveExpr field (Cos f)     =
   Neg (Mul (Sin f) (deriveExpr field f))
+deriveExpr field (Arcsin f)  =
+  -- D(arcsin(f)) = Df / sqrt(1 - f^2)
+  Div (deriveExpr field f)
+      (Pow (Sub (Const 1) (Mul f f)) (Const 0.5))
+deriveExpr field (Arccos f)  =
+  -- D(arccos(f)) = -Df / sqrt(1 - f^2)
+  Neg (Div (deriveExpr field f)
+           (Pow (Sub (Const 1) (Mul f f)) (Const 0.5)))
+deriveExpr field (Arctan f)  =
+  -- D(arctan(f)) = Df / (1 + f^2)
+  Div (deriveExpr field f)
+      (Add (Const 1) (Mul f f))
 deriveExpr field (Abs f)     =
   Div (Mul f (deriveExpr field f)) (Abs f)
 deriveExpr field (Erf f)     =
@@ -159,6 +171,9 @@ collectExts (Li f)      = specialExt "li"  f : collectExts f
 collectExts (Si f)      = specialExt "Si"  f : collectExts f
 collectExts (Ci f)      = specialExt "Ci"  f : collectExts f
 collectExts (Ei f)      = specialExt "Ei"  f : collectExts f
+collectExts (Arcsin f)  = collectExts f
+collectExts (Arccos f)  = collectExts f
+collectExts (Arctan f)  = collectExts f
 
 -- | Look up a known special function's Extension by name, for use in
 -- collectExts. Errors if the name isn't in knownSpecial -- this

@@ -45,6 +45,7 @@ tests = testGroup "limcalc"
   , multivariateLimitTests
   , simplifyFoldTests
   , partialFractionsTests
+  , algebraicRischTests
   ]
 
 -- | Helper: expand at a point
@@ -594,6 +595,9 @@ evalComplexExpr env (Exp f)   = exp (evalComplexExpr env f)
 evalComplexExpr env (Log f)   = log (evalComplexExpr env f)
 evalComplexExpr env (Sin f)   = sin (evalComplexExpr env f)
 evalComplexExpr env (Cos f)   = cos (evalComplexExpr env f)
+evalComplexExpr env (Arcsin f) = asin (evalComplexExpr env f)
+evalComplexExpr env (Arccos f) = acos (evalComplexExpr env f)
+evalComplexExpr env (Arctan f) = atan (evalComplexExpr env f)
 evalComplexExpr env (Pow f g) = evalComplexExpr env f ** evalComplexExpr env g
 
 -- | Assert that two complex values agree (within tolerance) on real
@@ -905,4 +909,63 @@ partialFractionsTests = testGroup "Partial fractions (Risch.Primitive)"
            (abs (csorted !! 0 + 1.0) < 1e-6 &&
             abs (csorted !! 1 - 0.5) < 1e-6 &&
             abs (csorted !! 2 - 0.5) < 1e-6)
+  ]
+
+------------------------------------------------------------------------
+-- Algebraic Risch: pattern-recognized special cases
+------------------------------------------------------------------------
+
+algebraicRischTests :: TestTree
+algebraicRischTests = testGroup "Algebraic Risch (pattern recognition)"
+  [ testCase "int 1/sqrt(1-x^2) dx = arcsin(x)" $
+      rischIntegrate
+        (Div (Const 1) (Pow (Sub (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5)))
+        "x"
+        @?= Elementary (Arcsin (Var "x"))
+
+  , testCase "int 1/(1+x^2) dx = arctan(x)" $
+      rischIntegrate
+        (Div (Const 1) (Add (Const 1) (Pow (Var "x") (Const 2))))
+        "x"
+        @?= Elementary (Arctan (Var "x"))
+
+  , testCase "int x/sqrt(1-x^2) dx = -sqrt(1-x^2)" $
+      case rischIntegrate
+        (Div (Var "x") (Pow (Sub (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5)))
+        "x" of
+        Elementary _ -> return ()
+        other -> assertFailure $ "Expected Elementary, got: " ++ show other
+
+  , testCase "int 1/sqrt(1+x^2) dx = log(x+sqrt(x^2+1)) (arcsinh)" $
+      case rischIntegrate
+        (Div (Const 1) (Pow (Add (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5)))
+        "x" of
+        Elementary _ -> return ()
+        other -> assertFailure $ "Expected Elementary, got: " ++ show other
+
+  , testCase "int sqrt(1-x^2) dx = x/2*sqrt(1-x^2) + arcsin(x)/2" $
+      case rischIntegrate
+        (Pow (Sub (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5))
+        "x" of
+        Elementary _ -> return ()
+        other -> assertFailure $ "Expected Elementary, got: " ++ show other
+
+  , testCase "D(arcsin(x)) = 1/sqrt(1-x^2) via deriveBase" $
+      simplify (deriveBase (Arcsin (Var "x")))
+        @?= Div (Const 1.0)
+                (Pow (Sub (Const 1.0) (Mul (Var "x") (Var "x"))) (Const 0.5))
+
+  , testCase "D(arctan(x)) = 1/(1+x^2) via deriveBase" $
+      simplify (deriveBase (Arctan (Var "x")))
+        @?= Div (Const 1.0)
+                (Add (Const 1.0) (Mul (Var "x") (Var "x")))
+
+  , testCase "int 1/sqrt(1-x^2) dx verified numerically at x=0.5" $
+      let result = expectElementary
+            (rischIntegrate
+              (Div (Const 1) (Pow (Sub (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5)))
+              "x")
+          got    = evalComplexExpr ("x", 0.5 :+ 0) result
+          expect = asin (0.5 :+ 0)
+      in complexApprox got expect
   ]

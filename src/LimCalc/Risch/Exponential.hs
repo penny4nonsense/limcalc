@@ -299,3 +299,6 @@ containsVar v (Li f)      = containsVar v f
 containsVar v (Si f)      = containsVar v f
 containsVar v (Ci f)      = containsVar v f
 containsVar v (Ei f)      = containsVar v f
+containsVar v (Arcsin f)  = containsVar v f
+containsVar v (Arccos f)  = containsVar v f
+containsVar v (Arctan f)  = containsVar v f

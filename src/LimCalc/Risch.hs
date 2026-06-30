@@ -66,6 +66,45 @@ recognizeSpecialIntegral f var =
     Div (Exp (Var v)) (Var v') | v == var && v' == var ->
       Just $ Elementary (Ei (Var var))
 
+    -- Algebraic patterns: integrands involving sqrt
+    -- int 1/sqrt(1-x^2) dx = arcsin(x)
+    Div (Const 1) (Pow (Sub (Const 1) (Pow (Var v) (Const 2))) (Const 0.5))
+      | v == var ->
+      Just $ Elementary (Arcsin (Var var))
+
+    -- int 1/sqrt(1+x^2) dx = arcsinh(x) = log(x + sqrt(x^2+1))
+    Div (Const 1) (Pow (Add (Const 1) (Pow (Var v) (Const 2))) (Const 0.5))
+      | v == var ->
+      Just $ Elementary $ simplify $
+        Log (Add (Var var)
+                 (Pow (Add (Pow (Var var) (Const 2)) (Const 1)) (Const 0.5)))
+
+    -- int 1/sqrt(x^2-1) dx = arccosh(x) = log(x + sqrt(x^2-1))
+    Div (Const 1) (Pow (Sub (Pow (Var v) (Const 2)) (Const 1)) (Const 0.5))
+      | v == var ->
+      Just $ Elementary $ simplify $
+        Log (Add (Var var)
+                 (Pow (Sub (Pow (Var var) (Const 2)) (Const 1)) (Const 0.5)))
+
+    -- int x/sqrt(1-x^2) dx = -sqrt(1-x^2)
+    Div (Var v) (Pow (Sub (Const 1) (Pow (Var v') (Const 2))) (Const 0.5))
+      | v == var && v' == var ->
+      Just $ Elementary $ simplify $
+        Neg (Pow (Sub (Const 1) (Pow (Var var) (Const 2))) (Const 0.5))
+
+    -- int 1/(1+x^2) dx = arctan(x)
+    Div (Const 1) (Add (Const 1) (Pow (Var v) (Const 2)))
+      | v == var ->
+      Just $ Elementary (Arctan (Var var))
+
+    -- int sqrt(1-x^2) dx = x/2*sqrt(1-x^2) + arcsin(x)/2
+    Pow (Sub (Const 1) (Pow (Var v) (Const 2))) (Const 0.5)
+      | v == var ->
+      Just $ Elementary $ simplify $
+        Add (Mul (Div (Var var) (Const 2))
+                 (Pow (Sub (Const 1) (Pow (Var var) (Const 2))) (Const 0.5)))
+            (Div (Arcsin (Var var)) (Const 2))
+
     _ -> Nothing
 
 rischIntegrateClassified :: Expr -> String -> RischResult
