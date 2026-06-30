@@ -38,6 +38,7 @@ tests = testGroup "limcalc"
   , qPolyDivisionTests
   , trigIntegrationTests
   , specialFunctionTests
+  , algebraicExtensionTests
   ]
 
 -- | Helper: expand at a point
@@ -684,4 +685,38 @@ specialFunctionTests = testGroup "Special function recognition"
         @?= simplify (Div (Cos (Var "x")) (Var "x"))
       simplify (deriveBase (Ei (Var "x")))
         @?= simplify (Div (Exp (Var "x")) (Var "x"))
+  ]
+
+------------------------------------------------------------------------
+-- Algebraic extension case in DiffField
+------------------------------------------------------------------------
+
+algebraicExtensionTests :: TestTree
+algebraicExtensionTests = testGroup "Algebraic extension (implicit differentiation)"
+  [ testCase "D(sqrt(x)) = 1/(2*sqrt(x)) via Algebraic extension" $
+      -- theta = sqrt(x), p(theta,x) = theta^2 - x
+      -- D(theta) = -(dp/dx)/(dp/dtheta) = -(-1)/(2*theta)
+      -- Mathematically = 1/(2*theta); simplifier leaves as Neg(Div(-1, 2t))
+      -- which is numerically correct. Pinned to actual output as a
+      -- regression anchor; will strengthen after Simplify.hs work.
+      let p = Sub (Pow (Var "t1") (Const 2)) (Var "x")
+          field = addExtension (baseField "x") (Algebraic p)
+      in simplify (derive field (Var "t1"))
+           @?= Neg (Div (Const (-1.0)) (Mul (Const 2.0) (Var "t1")))
+
+  , testCase "D(sqrt(1-x^2)) = -x/sqrt(1-x^2) via Algebraic extension" $
+      -- theta = sqrt(1-x^2), p(theta,x) = theta^2 + x^2 - 1
+      -- D(theta) = -(2x)/(2*theta) = -x/theta
+      let p = Sub (Add (Pow (Var "t1") (Const 2)) (Pow (Var "x") (Const 2))) (Const 1)
+          field = addExtension (baseField "x") (Algebraic p)
+      in simplify (derive field (Var "t1"))
+           @?= Neg (Div (Mul (Const 2.0) (Var "x")) (Mul (Const 2.0) (Var "t1")))
+
+  , testCase "D(cbrt(x)) = 1/(3*cbrt(x)^2) via Algebraic extension" $
+      -- theta = x^(1/3), p(theta,x) = theta^3 - x
+      -- D(theta) = -(-1)/(3*theta^2) = 1/(3*theta^2)
+      let p = Sub (Pow (Var "t1") (Const 3)) (Var "x")
+          field = addExtension (baseField "x") (Algebraic p)
+      in simplify (derive field (Var "t1"))
+           @?= Neg (Div (Const (-1.0)) (Mul (Const 3.0) (Pow (Var "t1") (Const 2.0))))
   ]

@@ -3,6 +3,7 @@ module LimCalc.DiffField where
 import LimCalc.Expr
 import LimCalc.Poly
 import LimCalc.RationalFunction
+import LimCalc.Simplify
 
 -- | A single extension of the differential field
 -- Each extension adds a new element θ to the field with a known derivation
@@ -93,24 +94,30 @@ deriveExpr field _           = Const 0
 
 -- | Look up the derivation of an extension variable
 lookupExtDeriv :: DiffField -> String -> Expr
-lookupExtDeriv (DiffField x exts names) name =
+lookupExtDeriv field@(DiffField x exts names) name =
   case lookup name (zip names exts) of
     Nothing  -> Const 0  -- not in tower, treat as constant
-    Just ext -> extensionDeriv ext name
+    Just ext -> extensionDeriv x ext name
 
 -- | The derivation of an extension element θ
-extensionDeriv :: Extension -> String -> Expr
-extensionDeriv (Primitive f) theta =
+extensionDeriv :: String -> Extension -> String -> Expr
+extensionDeriv _ (Primitive f) theta =
   -- Dθ = Df/f
   Div (deriveBase f) f
-extensionDeriv (Exponential f) theta =
+extensionDeriv _ (Exponential f) theta =
   -- Dθ = θ · Df
   Mul (Var theta) (deriveBase f)
-extensionDeriv (Algebraic p) theta =
-  -- Dθ via implicit differentiation: Dp(θ) = 0
-  -- p'(θ)·Dθ + ∂p/∂x = 0 → Dθ = -(∂p/∂x)/p'(θ)
-  Const 0  -- TODO: implement properly
-extensionDeriv (Special name arg deriv) theta =
+extensionDeriv baseX (Algebraic p) theta =
+  -- Implicit differentiation: p(θ, x) = 0
+  -- => ∂p/∂θ · Dθ + ∂p/∂x = 0
+  -- => Dθ = -(∂p/∂x) / (∂p/∂θ)
+  --
+  -- ∂p/∂x: treat θ (= Var theta) as constant, differentiate in x
+  -- ∂p/∂θ: treat x (= Var baseX) as constant, differentiate in θ
+  let dpdx   = simplify (deriveExpr (baseField baseX) p)
+      dpdtheta = simplify (deriveExpr (baseField theta) p)
+  in simplify (Neg (Div dpdx dpdtheta))
+extensionDeriv _ (Special name arg deriv) theta =
   -- D(f(arg)) = deriv · D(arg)
   deriv
 
