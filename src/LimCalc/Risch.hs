@@ -34,13 +34,25 @@ rischIntegrate f var =
         Left "Non-elementary exponential integral" -> NonElementary
         Left msg                                   -> NotImplemented msg
 
-    LogCase logArg ->
-      let inner       = Mul (Var var) (Div (deriveBase logArg) logArg)
-          innerResult = rischIntegrate inner var
-      in case innerResult of
-           Elementary e ->
-             Elementary (simplify (Sub (Mul (Var var) (Log logArg)) e))
-           other -> other
+    LogCase g h ->
+      -- Integration by parts: int g*log(h) dx = G*log(h) - int G*(h'/h) dx
+      -- where G = int g dx. Plain log(h) is the g=1 case.
+      --
+      -- Previously this discarded g entirely (always computed
+      -- int log(h) dx regardless of what g was) and never simplified
+      -- the recursive 'inner' expression before reclassifying it --
+      -- which broke even the plain log(x) case, since x*(1/x)
+      -- doesn't structurally look like a polynomial to
+      -- classifyIntegrand without simplification collapsing it to 1
+      -- first.
+      case rischIntegrate (simplify g) var of
+        Elementary gAntideriv ->
+          let inner = simplify (Mul gAntideriv (Div (deriveBase h) h))
+          in case rischIntegrate inner var of
+               Elementary e ->
+                 Elementary (simplify (Sub (Mul gAntideriv (Log h)) e))
+               other -> other
+        other -> other
 
     TrigCase ->
       case exprToTrigRatFun f var of
@@ -91,7 +103,7 @@ exprToTrigRatFun expr var = go expr
 data IntegrandClass
   = RationalCase (RatFun Double)
   | ExponentialCase Expr
-  | LogCase Expr
+  | LogCase Expr Expr  -- ^ multiplier g, log argument h: integrand is g * log(h)
   | TrigCase
   | PolynomialCase Expr
   | GeneralCase
@@ -105,9 +117,9 @@ classifyIntegrand f var
   | isExpForm f var  = case extractExpArg f of
                          Just arg -> ExponentialCase arg
                          Nothing  -> GeneralCase
-  | isLogForm f var  = case extractLogArg f of
-                         Just arg -> LogCase arg
-                         Nothing  -> GeneralCase
+  | isLogForm f var  = case extractLogParts f of
+                         Just (g, h) -> LogCase g h
+                         Nothing     -> GeneralCase
   | hasTrig f        = TrigCase
   | otherwise        = GeneralCase
 
@@ -159,12 +171,13 @@ extractExpArg (Mul _ (Exp f)) = Just f
 extractExpArg (Mul (Exp f) _) = Just f
 extractExpArg _               = Nothing
 
--- | Extract argument of log
-extractLogArg :: Expr -> Maybe Expr
-extractLogArg (Log f)         = Just f
-extractLogArg (Mul _ (Log f)) = Just f
-extractLogArg (Mul (Log f) _) = Just f
-extractLogArg _               = Nothing
+-- | Extract (multiplier, log argument) from a log-form expression.
+-- Plain Log f is treated as multiplier 1.
+extractLogParts :: Expr -> Maybe (Expr, Expr)
+extractLogParts (Log f)         = Just (Const 1, f)
+extractLogParts (Mul g (Log f)) = Just (g, f)
+extractLogParts (Mul (Log f) g) = Just (g, f)
+extractLogParts _               = Nothing
 
 -- | Convert expression to rational function
 exprToRatFun :: Expr -> String -> RatFun Double

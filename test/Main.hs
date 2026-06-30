@@ -443,6 +443,20 @@ rischTests = testGroup "Risch integration"
         NonElementary -> return ()
         other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
 
+  , testCase "int log(x) dx = x*log(x) - x (regression: required \
+             \simplifying the by-parts inner expression before \
+             \reclassifying it)" $
+      rischIntegrate (Log (Var "x")) "x"
+        @?= Elementary (Sub (Mul (Var "x") (Log (Var "x"))) (Var "x"))
+
+  , testCase "int x*log(x) dx = x^2/2*log(x) - x^2/4 (regression: \
+             \LogCase previously discarded the multiplier x entirely, \
+             \silently treating this the same as plain log(x))" $
+      rischIntegrate (Mul (Var "x") (Log (Var "x"))) "x"
+        @?= Elementary
+              (Sub (Mul (Const 0.5) (Mul (Pow (Var "x") (Const 2.0)) (Log (Var "x"))))
+                   (Mul (Const 0.25) (Pow (Var "x") (Const 2.0))))
+
   , testCase "primitive: int 1/x = log(x)" $
       let p     = Poly "x" [aN 1]
           q     = Poly "x" [aN 0, aN 1]
@@ -580,12 +594,9 @@ trigIntegrationTests :: TestTree
 trigIntegrationTests = testGroup "Trig integration via exponential extension"
   [ testCase "int sin(x) dx matches -cos(x) at x=0.7" $
       let result = expectElementary (rischIntegrate (Sin (Var "x")) "x")
-      in do
-           putStrLn ("DEBUG result = " ++ show result)
-           let got = evalComplexExpr ("x", 0.7 :+ 0) result
-           putStrLn ("DEBUG got = " ++ show got)
-           let expect = negate (cos (0.7 :+ 0))
-           complexApprox got expect
+          got    = evalComplexExpr ("x", 0.7 :+ 0) result
+          expect = negate (cos (0.7 :+ 0))
+      in complexApprox got expect
 
   , testCase "int cos(x) dx matches sin(x) at x=0.7" $
       let result = expectElementary (rischIntegrate (Cos (Var "x")) "x")
