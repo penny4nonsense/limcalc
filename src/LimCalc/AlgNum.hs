@@ -257,6 +257,16 @@ algToDouble (AlgNum _ rect) =
   let mid = midPoint rect
   in fromRational (realQ mid)
 
+-- | Approximate imaginary part of an AlgNum, as a Double.
+-- Mirrors algToDouble's convention (midpoint of isolating rectangle)
+-- but projects the imaginary component instead of the real one.
+-- Needed to detect non-real leading coefficients, e.g. when deciding
+-- whether Abs has a sensible real-valued local expansion.
+algImagDouble :: AlgNum -> Double
+algImagDouble (AlgNum _ rect) =
+  let mid = midPoint rect
+  in fromRational (imagQ mid)
+
 -- | Ord instance (approximate via Double)
 instance Ord AlgNum where
   compare a b = compare (algToDouble a) (algToDouble b)

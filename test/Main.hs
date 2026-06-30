@@ -135,6 +135,32 @@ expandTests = testGroup "Expansion engine"
       case expand (Var "y") (pt 0) "x" of
         Left (Unknown _) -> return ()
         _                -> assertFailure "Expected Unknown error"
+
+  , testCase "expand |x| at x=2 matches x" $
+      expand (Abs (Var "x")) (pt 2) "x"
+        @?= expand (Var "x") (pt 2) "x"
+
+  , testCase "expand |x| at x=-2 is -x" $
+      expand (Abs (Var "x")) (pt (-2)) "x"
+        @?= expand (Neg (Var "x")) (pt (-2)) "x"
+
+  , testCase "expand |x| at x=0 is NonAnalytic (kink)" $
+      case expand (Abs (Var "x")) (pt 0) "x" of
+        Left (NonAnalytic _) -> return ()
+        other                -> assertFailure $ "Expected NonAnalytic, got: " ++ show other
+
+  , testCase "expand |x^2| at x=0 is smooth (matches x^2)" $
+      expand (Abs (Pow (Var "x") (Const 2))) (pt 0) "x"
+        @?= expand (Pow (Var "x") (Const 2)) (pt 0) "x"
+
+  , testCase "expand |x+5| at x=0 matches x+5" $
+      expand (Abs (Add (Var "x") (Const 5))) (pt 0) "x"
+        @?= expand (Add (Var "x") (Const 5)) (pt 0) "x"
+
+  , testCase "expand |x^3| at x=0 is NonAnalytic (odd-order kink)" $
+      case expand (Abs (Pow (Var "x") (Const 3))) (pt 0) "x" of
+        Left (NonAnalytic _) -> return ()
+        other                -> assertFailure $ "Expected NonAnalytic, got: " ++ show other
   ]
 
 ------------------------------------------------------------------------

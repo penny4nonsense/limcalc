@@ -78,7 +78,71 @@ expand (Cos f) point var = do
   sf <- expand f point var
   return $ composeSeries cosTaylor sf
 
-expand (Abs f) point var = Left $ Unknown "Abs expansion not yet implemented"
+-- | Expand |f| at the given point.
+--
+-- Near h=0, |f(x0+h)| is determined entirely by the sign of f's
+-- leading nonzero term, since that term dominates for small h:
+--   - leading coefficient > 0  =>  |f| = f locally, series unchanged
+--   - leading coefficient < 0  =>  |f| = -f locally, series negated
+--   - leading coefficient non-real (nonzero imaginary part) =>
+--       |.| has no sensible real-analytic local expansion here
+--   - f's series is identically zero (no nonzero term at all, e.g.
+--       Abs (Var "x") at x0=0) => this is a genuine analytic kink.
+--       No Puiseux series in h represents |h| near h=0 (it agrees
+--       with neither h nor -h on both sides), so the engine reports
+--       this as NonAnalytic rather than silently returning some
+--       series (which would let a derivative computation downstream
+--       report a wrong numeric answer instead of correctly failing).
+expand (Abs f) point var = do
+  sf <- expand f point var
+  case leadingTermNZ (stripZeros sf) of
+    Nothing ->
+      Left $ NonAnalytic
+        "Abs has no local Puiseux expansion: f vanishes identically \
+        \to all computed orders at this point, indicating a genuine \
+        \kink (e.g. |x| at x=0) where no derivative exists"
+    Just lt
+      -- f(x0) = 0 (leading exponent > 0, i.e. the constant term was
+      -- zero and got stripped). Whether this is a genuine kink for
+      -- |f| depends on whether f actually changes sign as h crosses
+      -- 0, not merely on whether f(x0) = 0:
+      --   - odd-order vanishing (e.g. f ~ c*h, c*h^3, ...) means f
+      --     changes sign -> |f| has a true corner here, no single
+      --     local Puiseux series represents it (e.g. |x| at x=0).
+      --   - even-order vanishing (e.g. f ~ c*h^2) means f does NOT
+      --     change sign -> |f| = +-f locally is still smooth (e.g.
+      --     |x^2| at x=0 is just x^2).
+      --   - fractional-order vanishing isn't a single well-defined
+      --     real direction crossing in the usual sense either; treat
+      --     conservatively as a kink (NonAnalytic) rather than guess.
+      | pExp lt > 0 && isOddInteger (pExp lt) ->
+          Left $ NonAnalytic
+            "Abs has no local Puiseux expansion: f(x0) = 0 and f \
+            \changes sign here (odd-order vanishing), so |f| has a \
+            \genuine kink at this point (no derivative exists)"
+      | pExp lt > 0 && not (isPositiveIntegerExp (pExp lt)) ->
+          Left $ NonAnalytic
+            "Abs has no local Puiseux expansion: f(x0) = 0 with a \
+            \fractional-order leading term, so the sign behavior of \
+            \f near this point is not well-defined as a single \
+            \real direction; |f| is not analytic here"
+      | otherwise ->
+          let a = coeff lt
+          in if abs (algImagDouble a) > 1e-12
+               then Left $ DomainError
+                      "Abs of a series with non-real leading coefficient"
+               else if algToDouble a > 0
+                      then Right sf
+                      else Right $ scaleSeries (negate algOne) sf
+
+-- | True if r is a positive integer (denominator 1, numerator > 0).
+isPositiveIntegerExp :: Rational -> Bool
+isPositiveIntegerExp r = denominator r == 1 && numerator r > 0
+
+-- | True if r is a positive odd integer. Assumes isPositiveIntegerExp
+-- r already holds where this is used.
+isOddInteger :: Rational -> Bool
+isOddInteger r = isPositiveIntegerExp r && odd (numerator r)
 
 -- | How many terms
 depth :: Int
