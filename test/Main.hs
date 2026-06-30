@@ -673,11 +673,10 @@ specialFunctionTests = testGroup "Special function recognition"
       rischIntegrate (Div (Exp (Var "x")) (Var "x")) "x"
         @?= Elementary (Ei (Var "x"))
 
-  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase \
-             \(DiffField.hs; NOT via diff/Calculus.hs, which goes \
-             \through symExpand -- deliberately left unimplemented \
-             \for these, since full Taylor expansion is separate, \
-             \unstarted work)" $ do
+  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase; \
+             \Erf and Si also work via diff/symExpand (Li/Ci/Ei \
+             \have logarithmic singularities and are not yet \
+             \implemented in symExpand)" $ do
       simplify (deriveBase (Erf (Var "x")))
         @?= simplify (Mul (Div (Const 2.0) (Pow Pi (Const 0.5))) (Exp (Neg (Mul (Var "x") (Var "x")))))
       simplify (deriveBase (Li (Var "x")))
@@ -688,6 +687,15 @@ specialFunctionTests = testGroup "Special function recognition"
         @?= simplify (Div (Cos (Var "x")) (Var "x"))
       simplify (deriveBase (Ei (Var "x")))
         @?= simplify (Div (Exp (Var "x")) (Var "x"))
+
+  , testCase "diff (Erf x) = (2/sqrt(pi)) * exp(-x^2) via symExpand" $
+      fmap simplify (diff (Erf (Var "x")) "x")
+        @?= Right (Mul (Div (Const 2.0) (Pow Pi (Const 0.5)))
+                       (Exp (Neg (Mul (Var "x") (Var "x")))))
+
+  , testCase "diff (Si x) = sin(x)/x via symExpand" $
+      fmap simplify (diff (Si (Var "x")) "x")
+        @?= Right (Div (Sin (Var "x")) (Var "x"))
   ]
 
 ------------------------------------------------------------------------
