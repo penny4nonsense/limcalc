@@ -2,17 +2,18 @@ module LimCalc.Types where
 
 import Data.Map.Strict (Map)
 import LimCalc.Puiseux
+import LimCalc.AlgNum
 
--- | A point in n-dimensional space, mapping variable names to values
-type Point = Map String Double
+-- | A point in n-dimensional space
+type Point = Map String AlgNum
 
--- | Errors that can occur during series expansion
+-- | Errors during expansion
 data ExpandError
-  = Singularity String    -- ^ Pole or essential singularity
-  | Undefined String      -- ^ Log of negative, sqrt of negative, etc.
-  | DomainError String    -- ^ Would require complex result
-  | Unknown String        -- ^ Couldn't determine
+  = Singularity String
+  | Undefined String
+  | DomainError String
+  | Unknown String
   deriving (Show, Eq)
 
--- | Result of an expansion attempt
-type ExpandResult = Either ExpandError PuiseuxSeries
+-- | Result of expansion
+type ExpandResult = Either ExpandError (PuiseuxSeries AlgNum)

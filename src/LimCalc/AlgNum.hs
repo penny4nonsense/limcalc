@@ -25,7 +25,7 @@ inRect (GQ r i) (IsoRect (GQ r1 i1) (GQ r2 i2)) =
 data AlgNum = AlgNum
   { algMinPoly :: QPoly
   , algIsoRect :: IsoRect
-  } deriving (Eq)
+  }
 
 instance Show AlgNum where
   show (AlgNum p rect) = "AlgNum(" ++ show p ++ ", " ++ show rect ++ ")"
@@ -91,14 +91,14 @@ midPoint (IsoRect ll ur) = (ll + ur) / 2
 -- | Check if a polynomial has a root in a rectangle
 hasRoot :: QPoly -> IsoRect -> Bool
 hasRoot p rect =
-  let corners = [ lowerLeft rect
-                , GQ (realQ (upperRight rect)) (imagQ (lowerLeft rect))
-                , upperRight rect
-                , GQ (realQ (lowerLeft rect)) (imagQ (upperRight rect))
-                ]
-  in any (\v -> realQ v * realQ (qEval p (midPoint rect)) < 0)
-         (map (qEval p) corners)
-     || True
+  let ll  = lowerLeft rect
+      ur  = upperRight rect
+      -- Check real axis interval [realQ ll, realQ ur]
+      -- Evaluate polynomial at real endpoints
+      rLeft  = realQ (qEval p (GQ (realQ ll) 0))
+      rRight = realQ (qEval p (GQ (realQ ur) 0))
+      rMid   = realQ (qEval p (GQ ((realQ ll + realQ ur) / 2) 0))
+  in (rLeft * rMid <= 0) || (rMid * rRight <= 0) || abs rMid < 1e-10
 
 -- | Add two algebraic numbers
 algAdd :: AlgNum -> AlgNum -> AlgNum
@@ -108,14 +108,25 @@ algAdd a b =
   in refineToRoot (AlgNum resPoly rect)
 
 -- | Negate an algebraic number
+--
+-- Negating coefficients at odd indices gives a polynomial with the
+-- correct root, but does NOT preserve monic-ness (e.g. negating
+-- algOne's [-1, 1] gives [-1, -1], leading coeff -1, not 1).
+-- addResultantQ/mulResultantQ's linear-case shortcuts assume a monic
+-- input (root = -c0/1) and silently mis-extract the root otherwise.
+-- Rescaling by 1/leadingCoeff after negation keeps the result monic,
+-- matching the invariant the rest of the module relies on.
 algNeg :: AlgNum -> AlgNum
 algNeg (AlgNum p rect) =
-  let negP = QPoly [ if even i then c else negate c
-                   | (i, c) <- zip [0 :: Int ..] (qPolyCoef p) ]
+  let negP0 = QPoly [ if even i then c else negate c
+                     | (i, c) <- zip [0 :: Int ..] (qPolyCoef p) ]
+      negP  = qStrip negP0
+      lc    = qLeadingCoeff negP
+      monicNegP = if lc == 0 then negP else qScalePoly (1/lc) negP
       negRect = IsoRect
         (GQ (negate (realQ (upperRight rect))) (imagQ (lowerLeft rect)))
         (GQ (negate (realQ (lowerLeft rect))) (imagQ (upperRight rect)))
-  in AlgNum (qStrip negP) negRect
+  in AlgNum monicNegP negRect
 
 -- | Multiply two algebraic numbers
 algMul :: AlgNum -> AlgNum -> AlgNum
@@ -169,16 +180,54 @@ rectInv rect =
       maxI = maximum (map imagQ invCorners)
   in IsoRect (GQ minR minI) (GQ maxR maxI)
 
--- | Refine until rectangle is tight
+-- | Refine until rectangle is tight.
+--
+-- If the minimal polynomial is degree <= 1 after stripping, the
+-- "algebraic number" is actually exactly rational: c0 + c1*x = 0
+-- has the exact root x = -c0/c1, with zero imaginary part since
+-- the coefficients are real rationals. In that case we construct
+-- a clean isolating rectangle directly around the exact root,
+-- exactly mirroring what 'fromQ' does, instead of running the
+-- (real-axis-only) bisection in 'refineRect', which has no business
+-- being invoked when there is nothing left to isolate.
+--
+-- For genuinely higher-degree results (degree >= 2), we still fall
+-- back to refineRect/hasRoot, which remains a real-axis-only
+-- approximation pending a true complex root isolation procedure
+-- (see hasRoot's TODO).
 refineToRoot :: AlgNum -> AlgNum
-refineToRoot an = refineRect an (1 % 1000)
+refineToRoot an@(AlgNum p _) =
+  let p' = qStrip p
+  in case qDegree p' of
+       0 -> an  -- degenerate: no roots; leave rectangle as-is
+       1 -> let c0 = qPolyCoef p' !! 0
+                c1 = qPolyCoef p' !! 1
+                root = negate c0 / c1
+            in AlgNum p' (exactRect root)
+       _ -> refineRect (AlgNum p' (algIsoRect an)) (1 % 1000)
+
+-- | Construct a clean isolating rectangle around an exact rational
+-- root, matching the convention used by 'fromQ'.
+exactRect :: Rational -> IsoRect
+exactRect root = IsoRect
+  (GQ (root - 1) (negate 1))
+  (GQ (root + 1) 1)
 
 -- | Num instance for AlgNum
+--
+-- abs was previously defined as identity (abs an = an), which is
+-- wrong: 'abs' must return the magnitude, not the value itself.
+-- This silently broke every stripZeros/leadingTermNZ/isAlgZero-style
+-- comparison for negative coefficients, since comparing 'abs x > eps'
+-- via the Ord instance (which compares algToDouble values) would
+-- compare the *signed* double against eps -- so any negative
+-- coefficient with magnitude bigger than eps was incorrectly treated
+-- as smaller than eps and stripped as if it were zero.
 instance Num AlgNum where
   (+)         = algAdd
   (*)         = algMul
   negate      = algNeg
-  abs an      = an
+  abs an      = if algToDouble an < 0 then algNeg an else an
   signum _    = algOne
   fromInteger = fromQ . fromInteger
 
@@ -186,3 +235,68 @@ instance Num AlgNum where
 instance Fractional AlgNum where
   recip        = algInv
   fromRational = fromQ
+
+-- | Approximate transcendental functions at AlgNum
+-- These return approximate AlgNum values using Double arithmetic
+algSin :: AlgNum -> AlgNum
+algSin a = fromRational (toRational (sin (algToDouble a)))
+
+algCos :: AlgNum -> AlgNum
+algCos a = fromRational (toRational (cos (algToDouble a)))
+
+algExp :: AlgNum -> AlgNum
+algExp a = fromRational (toRational (exp (algToDouble a)))
+
+algLog :: AlgNum -> AlgNum
+algLog a = fromRational (toRational (log (algToDouble a)))
+
+-- | Convert AlgNum to approximate Double
+-- Uses midpoint of isolating rectangle
+algToDouble :: AlgNum -> Double
+algToDouble (AlgNum _ rect) =
+  let mid = midPoint rect
+  in fromRational (realQ mid)
+
+-- | Ord instance (approximate via Double)
+instance Ord AlgNum where
+  compare a b = compare (algToDouble a) (algToDouble b)
+
+-- | Real instance (approximate via Double)
+instance Real AlgNum where
+  toRational = toRational . algToDouble
+
+-- | RealFrac instance (approximate)
+instance RealFrac AlgNum where
+  properFraction a =
+    let d = algToDouble a
+        n = truncate d :: Integer
+    in (fromIntegral n, fromQ (toRational (d - fromIntegral n)))
+  truncate = truncate . algToDouble
+  round    = round    . algToDouble
+  ceiling  = ceiling  . algToDouble
+  floor    = floor    . algToDouble
+
+-- | Floating instance (approximate via Double)
+instance Floating AlgNum where
+  pi      = fromQ (toRational (pi :: Double))
+  exp     = algExp
+  log     = algLog
+  sin     = algSin
+  cos     = algCos
+  sqrt a  = fromQ (toRational (sqrt (algToDouble a)))
+  (**)  a b = fromQ (toRational (algToDouble a ** algToDouble b))
+  asin  a = fromQ (toRational (asin  (algToDouble a)))
+  acos  a = fromQ (toRational (acos  (algToDouble a)))
+  atan  a = fromQ (toRational (atan  (algToDouble a)))
+  sinh  a = fromQ (toRational (sinh  (algToDouble a)))
+  cosh  a = fromQ (toRational (cosh  (algToDouble a)))
+  asinh a = fromQ (toRational (asinh (algToDouble a)))
+  acosh a = fromQ (toRational (acosh (algToDouble a)))
+  atanh a = fromQ (toRational (atanh (algToDouble a)))
+
+-- | Check if AlgNum is zero
+isAlgZero :: AlgNum -> Bool
+isAlgZero a = abs (algToDouble a) < 1e-12
+
+instance Eq AlgNum where
+  a == b = abs (algToDouble a - algToDouble b) < 1e-12
