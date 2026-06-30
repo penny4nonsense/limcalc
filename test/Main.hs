@@ -458,6 +458,19 @@ rischTests = testGroup "Risch integration"
               (Sub (Mul (Const 0.5) (Mul (Pow (Var "x") (Const 2.0)) (Log (Var "x"))))
                    (Mul (Const 0.25) (Pow (Var "x") (Const 2.0))))
 
+  , testCase "int 2x/(x^2-1) dx = log(x^2-1) (regression: log-derivative \
+             \edge case in Rothstein-Trager produced garbage when a = c*d')" $
+      rischIntegrate (Div (Mul (Const 2) (Var "x"))
+                         (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x"
+        @?= Elementary (Log (Add (Const (-1.0)) (Pow (Var "x") (Const 2.0))))
+
+  , testCase "int 1/(x^2-1) dx has two log terms (partial fractions via \
+             \Rothstein-Trager)" $
+      case rischIntegrate (Div (Const 1)
+                              (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x" of
+        Elementary _ -> return ()
+        other -> assertFailure $ "Expected Elementary, got: " ++ show other
+
   , testCase "primitive: int 1/x = log(x)" $
       let p     = Poly "x" [aN 1]
           q     = Poly "x" [aN 0, aN 1]

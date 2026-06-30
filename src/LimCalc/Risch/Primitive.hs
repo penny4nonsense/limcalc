@@ -58,15 +58,39 @@ integratePrimitive rf field =
 -- right question).
 rothsteinTrager :: RatFun AlgNum -> DiffField -> Either String [(AlgNum, Poly AlgNum)]
 rothsteinTrager (RatFun a d) field =
-  let d'    = diffPoly d
-      rPoly = resultantPoly a d d'
-  in case findRationalRoots rPoly of
-       Nothing    -> Left "NonElementary"
-       Just roots ->
-         Right [ (c, gcdPoly d (subPoly a (scalePoly c d')))
-               | c <- roots
-               , not (isAlgZero c)
-               ]
+  let d' = diffPoly d
+  in case logDerivativeCheck a d d' of
+       Just c  -> Right [(c, d)]  -- int c*(d'/d) dx = c*log(d)
+       Nothing ->
+         let rPoly = resultantPoly a d d'
+         in case findRationalRoots rPoly of
+              Nothing    -> Left "NonElementary"
+              Just roots ->
+                Right [ (c, gcdPoly d (subPoly a (scalePoly c d')))
+                      | c <- roots
+                      , not (isAlgZero c)
+                      ]
+
+-- | Check whether a = c * d' for some constant AlgNum c (the
+-- log-derivative case). If so, return Just c; otherwise Nothing.
+--
+-- This is the edge case where the integrand is a scalar multiple of
+-- the logarithmic derivative of the denominator: int c*(d'/d) dx =
+-- c*log(d). The Rothstein-Trager resultant machinery degenerates in
+-- this case (the resultant polynomial has a root at z=c whose GCD
+-- computation gives back all of d rather than a proper factor), so
+-- we detect and handle it directly.
+logDerivativeCheck :: Poly AlgNum -> Poly AlgNum -> Poly AlgNum -> Maybe AlgNum
+logDerivativeCheck a _ d'
+  | degree d' < 0 = Nothing
+  | otherwise =
+      let q = quotPoly a d'
+          r = remPoly a d'
+      in if degree q == 0 && isZeroPoly r
+           then Just (leadingCoeff q)
+           else Nothing
+  where
+    isZeroPoly p = degree p < 0
 
 -- | Compute the Rothstein-Trager resultant polynomial R(z)
 --
