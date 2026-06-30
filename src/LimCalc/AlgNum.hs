@@ -458,8 +458,20 @@ instance Floating AlgNum where
   atanh a = fromQ (toRational (atanh (algToDouble a)))
 
 -- | Check if AlgNum is zero
+--
+-- Compares BOTH real and imaginary parts. This MUST check both: a
+-- version checking only algToDouble (the real part) was previously
+-- fixed and tested in this session but was lost before being
+-- committed, which silently broke every zero-check throughout the
+-- codebase the moment a purely-imaginary nonzero value appeared
+-- (e.g. 1/(2i) = -0.5i, whose real part is ~0). Concretely, this
+-- caused monomialPoly's c==0 guard to treat such a value as zero,
+-- producing an empty polynomial where a nonzero one was needed,
+-- which in turn made divModPoly's degree-reduction step a no-op and
+-- looped forever (used by gcdPoly, used by ratFun's automatic
+-- reduction, triggered by trig integration's t=exp(ix) substitution).
 isAlgZero :: AlgNum -> Bool
-isAlgZero a = abs (algToDouble a) < 1e-12
+isAlgZero a = abs (algToDouble a) < 1e-12 && abs (algImagDouble a) < 1e-12
 
 instance Eq AlgNum where
-  a == b = abs (algToDouble a - algToDouble b) < 1e-12
+  a == b = isAlgZero (a - b)

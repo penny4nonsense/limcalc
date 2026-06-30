@@ -1,5 +1,6 @@
 module Main where
 
+import Data.Complex
 import Test.Tasty
 import Test.Tasty.HUnit
 import qualified Data.Map.Strict as Map
@@ -35,6 +36,7 @@ tests = testGroup "limcalc"
   , rischTests
   , algNumDegree2Tests
   , qPolyDivisionTests
+  , trigIntegrationTests
   ]
 
 -- | Helper: expand at a point
@@ -442,8 +444,8 @@ rischTests = testGroup "Risch integration"
         other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
 
   , testCase "primitive: int 1/x = log(x)" $
-      let p     = Poly "x" [1 :: Double]
-          q     = Poly "x" [0, 1]
+      let p     = Poly "x" [aN 1]
+          q     = Poly "x" [aN 0, aN 1]
           rf    = ratFun p q
           field = baseField "x"
       in case integratePrimitive rf field of
@@ -528,4 +530,84 @@ qPolyDivisionTests = testGroup "QPoly division"
       let p = QPoly [-1, 0, 1]
           q = QPoly [-1, 1]
       in qQuotPoly p q @?= fst (qDivModPoly p q)
+  ]
+
+------------------------------------------------------------------------
+-- Trig integration via the exponential extension (e^(ix))
+------------------------------------------------------------------------
+
+-- | Evaluate an Expr at a point, in Complex Double, since
+-- rischIntegrate's trig output legitimately contains I and only
+-- cancels to a real value at the end. Var lookups use the single
+-- supplied (name, value) binding; Const/Pi/E/I are independent of
+-- the binding.
+evalComplexExpr :: (String, Complex Double) -> Expr -> Complex Double
+evalComplexExpr _        (Const c) = c :+ 0
+evalComplexExpr _        Pi        = pi :+ 0
+evalComplexExpr _        E         = exp 1 :+ 0
+evalComplexExpr _        I         = 0 :+ 1
+evalComplexExpr (vn, vv) (Var x)
+  | x == vn   = vv
+  | otherwise = error ("evalComplexExpr: unbound variable " ++ x)
+evalComplexExpr env (Add f g) = evalComplexExpr env f + evalComplexExpr env g
+evalComplexExpr env (Sub f g) = evalComplexExpr env f - evalComplexExpr env g
+evalComplexExpr env (Mul f g) = evalComplexExpr env f * evalComplexExpr env g
+evalComplexExpr env (Div f g) = evalComplexExpr env f / evalComplexExpr env g
+evalComplexExpr env (Neg f)   = negate (evalComplexExpr env f)
+evalComplexExpr env (Abs f)   = magnitude (evalComplexExpr env f) :+ 0
+evalComplexExpr env (Exp f)   = exp (evalComplexExpr env f)
+evalComplexExpr env (Log f)   = log (evalComplexExpr env f)
+evalComplexExpr env (Sin f)   = sin (evalComplexExpr env f)
+evalComplexExpr env (Cos f)   = cos (evalComplexExpr env f)
+evalComplexExpr env (Pow f g) = evalComplexExpr env f ** evalComplexExpr env g
+
+-- | Assert that two complex values agree (within tolerance) on real
+-- and imaginary parts.
+complexApprox :: Complex Double -> Complex Double -> Assertion
+complexApprox got expected = do
+  abs (realPart got - realPart expected) < 1e-6 @?
+    ("real part: expected " ++ show (realPart expected) ++ ", got " ++ show (realPart got))
+  abs (imagPart got - imagPart expected) < 1e-6 @?
+    ("imag part: expected " ++ show (imagPart expected) ++ ", got " ++ show (imagPart got))
+
+-- | Extract the Expr from an Elementary RischResult, failing the
+-- test otherwise.
+expectElementary :: RischResult -> Expr
+expectElementary (Elementary e) = e
+expectElementary other = error ("expected Elementary, got: " ++ show other)
+
+trigIntegrationTests :: TestTree
+trigIntegrationTests = testGroup "Trig integration via exponential extension"
+  [ testCase "int sin(x) dx matches -cos(x) at x=0.7" $
+      let result = expectElementary (rischIntegrate (Sin (Var "x")) "x")
+      in do
+           putStrLn ("DEBUG result = " ++ show result)
+           let got = evalComplexExpr ("x", 0.7 :+ 0) result
+           putStrLn ("DEBUG got = " ++ show got)
+           let expect = negate (cos (0.7 :+ 0))
+           complexApprox got expect
+
+  , testCase "int cos(x) dx matches sin(x) at x=0.7" $
+      let result = expectElementary (rischIntegrate (Cos (Var "x")) "x")
+          got    = evalComplexExpr ("x", 0.7 :+ 0) result
+          expect = sin (0.7 :+ 0)
+      in complexApprox got expect
+
+  , testCase "int sin(x) dx matches -cos(x) at x=2.3 (different point)" $
+      let result = expectElementary (rischIntegrate (Sin (Var "x")) "x")
+          got    = evalComplexExpr ("x", 2.3 :+ 0) result
+          expect = negate (cos (2.3 :+ 0))
+      in complexApprox got expect
+
+  , testCase "int cos(x) dx matches sin(x) at x=2.3 (different point)" $
+      let result = expectElementary (rischIntegrate (Cos (Var "x")) "x")
+          got    = evalComplexExpr ("x", 2.3 :+ 0) result
+          expect = sin (2.3 :+ 0)
+      in complexApprox got expect
+
+  , testCase "int 1/(x^2+1) dx is non-elementary over the reals (regression: \
+             \complex root-finding previously misclassified this as Elementary)" $
+      case rischIntegrate (Div (Const 1) (Add (Pow (Var "x") (Const 2)) (Const 1))) "x" of
+        NonElementary -> return ()
+        other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
   ]

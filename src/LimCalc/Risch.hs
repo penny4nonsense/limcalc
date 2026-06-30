@@ -43,13 +43,49 @@ rischIntegrate f var =
            other -> other
 
     TrigCase ->
-      NotImplemented "Trig integration via exponential extension"
+      case exprToTrigRatFun f var of
+        Nothing -> NotImplemented
+          "Trig integration only supports rational expressions in \
+          \sin(var) and cos(var) directly (not e.g. sin(2*x) or \
+          \sin(x)^2 written via Pow, or trig of a different variable)"
+        Just rf ->
+          let theta = Mul I (Var var)
+              field = addExtension (baseField var) (Exponential theta)
+          in case integrateExponential rf field of
+               ExponentialElementary e   -> Elementary (simplify e)
+               ExponentialNonElementary  -> NonElementary
+               ExponentialError msg      -> NotImplemented msg
 
     PolynomialCase poly ->
       Elementary (simplify (integratePolynomial poly var))
 
     GeneralCase ->
       NotImplemented "General case — full tower not yet implemented"
+
+-- | Convert a Sin/Cos/Add/Mul/Div/Neg/Const expression (exactly the
+-- grammar hasTrig recognizes) into a rational function in
+-- t = exp(i*var), via Euler's formula:
+--   sin(var) = (t^2 - 1) / (2*i*t)
+--   cos(var) = (t^2 + 1) / (2*t)
+exprToTrigRatFun :: Expr -> String -> Maybe (RatFun AlgNum)
+exprToTrigRatFun expr var = go expr
+  where
+    tVar = "t"
+    tSquaredMinusOne = Poly tVar [negate algOne, algZero, algOne]
+    tSquaredPlusOne  = Poly tVar [algOne, algZero, algOne]
+    twoT  = Poly tVar [algZero, fromQ 2]
+    twoIT = Poly tVar [algZero, fromQ 2 * algI]
+    onePolyT = Poly tVar [algOne]
+
+    go (Sin (Var v)) | v == var = Just (ratFun tSquaredMinusOne twoIT)
+    go (Cos (Var v)) | v == var = Just (ratFun tSquaredPlusOne twoT)
+    go (Const c) = Just (ratFun (Poly tVar [fromRational (toRational c)]) onePolyT)
+    go (Add f g) = addRat <$> go f <*> go g
+    go (Sub f g) = subRat <$> go f <*> go g
+    go (Mul f g) = mulRat <$> go f <*> go g
+    go (Div f g) = divRat <$> go f <*> go g
+    go (Neg f)   = negRat <$> go f
+    go _         = Nothing
 
 -- | Classification of integrand
 data IntegrandClass
