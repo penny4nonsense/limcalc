@@ -1,42 +1,123 @@
-module LimCalc.BivPoly where
+-- | Bivariate polynomial arithmetic and resultant computation over ℚ.
+--
+-- This module serves one primary purpose: computing the minimal
+-- polynomial of a sum or product of two algebraic numbers, via
+-- resultant construction. If @α@ satisfies @p(x) = 0@ and @β@
+-- satisfies @q(x) = 0@, then @α + β@ is a root of
+-- @res_y(p(y), q(x − y))@ and @α · β@ is a root of
+-- @res_y(p(y), y^n · q(x\/y))@. These resultants are computed here
+-- as 'addResultantQ' and 'mulResultantQ'.
+--
+-- = Representation
+--
+-- A 'BivPoly' is a univariate polynomial in @y@ whose coefficients
+-- are 'QPoly' values (polynomials in @x@). This represents a
+-- bivariate polynomial @p(x, y) = ∑ cᵢ(x) · yⁱ@.
+--
+-- = Determinant method
+--
+-- The Sylvester matrix is constructed via 'LimCalc.Poly.sylvesterMatrix'
+-- (which only uses ring operations), but the determinant is computed
+-- via cofactor expansion ('cofactorDet') rather than Gaussian
+-- elimination. Gaussian elimination requires division by pivots;
+-- for 'QPoly' coefficients this means polynomial quotient, which
+-- silently drops remainders and is unsound when the division is not
+-- exact. Cofactor expansion only uses ring operations and is always
+-- correct, at the cost of @O(n!)@ complexity — acceptable since the
+-- matrices involved are small (typically 4×4 or smaller).
+--
+-- = Squarefree reduction
+--
+-- The raw resultant typically has repeated factors. 'squarefreeRadical'
+-- reduces it to its squarefree part (product of distinct irreducible
+-- factors) via Yun's algorithm, since 'LimCalc.AlgNum.refineToRoot'
+-- only needs the root set, not multiplicities.
+module LimCalc.BivPoly
+  ( -- * Type
+    BivPoly (..)
+    -- * Constructors
+  , zeroBiv
+  , constBiv
+  , monomialBiv
+    -- * Properties
+  , bivDegree
+  , bivLeadingCoeff
+    -- * Normalisation
+  , bivStrip
+    -- * Arithmetic
+  , addBiv
+  , negBiv
+  , subBiv
+  , scaleBiv
+  , mulBiv
+    -- * Substitution
+  , qPolyToBiv
+  , xMinusY
+  , xMinusYPow
+  , substituteXMinusY
+    -- * Division
+  , pseudoDivBiv
+  , divModBiv
+  , divBivByQPoly
+  , qDivPoly
+    -- * Subresultant PRS
+  , subresultantPRS
+    -- * Resultant
+  , addResultantBiv
+  , mulResultantBiv
+  , addResultantQ
+  , mulResultantQ
+  , sylvesterResultantRing
+  , cofactorDet
+  , squarefreeRadical
+    -- * Poly QPoly views
+  , qPolyAsConstInY
+  , asPolyInY
+  , substXMinusYAsPolyInY
+  , substXOverYAsPolyInY
+  ) where
 
 import LimCalc.QPoly
 import qualified LimCalc.Poly as Poly
 
--- | Bivariate polynomial in y with QPoly-in-x coefficients
--- BivPoly [c0, c1, c2, ...] represents c0 + c1*y + c2*y^2 + ...
--- where each ci is a QPoly in x
+-- | A bivariate polynomial @p(x, y) = ∑ cᵢ(x) · yⁱ@, represented
+-- as a univariate polynomial in @y@ with 'QPoly'-in-@x@ coefficients.
+--
+-- @bivCoef !! i@ is the coefficient of @yⁱ@, as a 'QPoly' in @x@.
+-- The zero polynomial is @BivPoly []@. The last element of a
+-- non-empty coefficient list is non-zero (maintained by 'bivStrip').
 newtype BivPoly = BivPoly { bivCoef :: [QPoly] }
   deriving (Eq, Show)
 
--- | Zero bivariate polynomial
+-- | The zero bivariate polynomial.
 zeroBiv :: BivPoly
 zeroBiv = BivPoly []
 
--- | Constant bivariate polynomial (no y dependence)
+-- | A constant bivariate polynomial (no @y@ dependence).
 constBiv :: QPoly -> BivPoly
 constBiv p = BivPoly [p]
 
--- | Monomial: c * y^n where c is a QPoly
+-- | A monomial @c(x) · yⁿ@.
 monomialBiv :: QPoly -> Int -> BivPoly
 monomialBiv c n = BivPoly (replicate n (QPoly []) ++ [c])
 
--- | Degree in y
+-- | Degree in @y@. Returns @−1@ for the zero polynomial.
 bivDegree :: BivPoly -> Int
 bivDegree (BivPoly []) = -1
 bivDegree (BivPoly cs) = length cs - 1
 
--- | Leading coefficient (highest power of y) as QPoly
+-- | Leading coefficient in @y@ (as a 'QPoly' in @x@).
+-- Returns the zero polynomial for the zero bivariate polynomial.
 bivLeadingCoeff :: BivPoly -> QPoly
 bivLeadingCoeff (BivPoly []) = QPoly []
 bivLeadingCoeff (BivPoly cs) = last cs
 
--- | Strip trailing zero polynomials
+-- | Remove trailing zero-polynomial coefficients.
 bivStrip :: BivPoly -> BivPoly
 bivStrip (BivPoly cs) =
   BivPoly (reverse $ dropWhile (== QPoly []) $ reverse cs)
 
--- | Add two bivariate polynomials
+-- | Add two bivariate polynomials.
 addBiv :: BivPoly -> BivPoly -> BivPoly
 addBiv (BivPoly cs1) (BivPoly cs2) =
   bivStrip $ BivPoly $ addCoefs cs1 cs2
@@ -45,21 +126,21 @@ addBiv (BivPoly cs1) (BivPoly cs2) =
     addCoefs xs []         = xs
     addCoefs (x:xs) (y:ys) = qAddPoly x y : addCoefs xs ys
 
--- | Negate a bivariate polynomial
+-- | Negate a bivariate polynomial.
 negBiv :: BivPoly -> BivPoly
 negBiv (BivPoly cs) = BivPoly (map negQPoly cs)
   where negQPoly (QPoly xs) = QPoly (map negate xs)
 
--- | Subtract two bivariate polynomials
+-- | Subtract two bivariate polynomials.
 subBiv :: BivPoly -> BivPoly -> BivPoly
 subBiv p q = addBiv p (negBiv q)
 
--- | Scale by a QPoly
+-- | Scale a bivariate polynomial by a 'QPoly' factor.
 scaleBiv :: QPoly -> BivPoly -> BivPoly
 scaleBiv c (BivPoly cs) =
   bivStrip $ BivPoly (map (qMulPoly c) cs)
 
--- | Multiply two bivariate polynomials
+-- | Multiply two bivariate polynomials (Cauchy product in @y@).
 mulBiv :: BivPoly -> BivPoly -> BivPoly
 mulBiv (BivPoly []) _ = zeroBiv
 mulBiv _ (BivPoly []) = zeroBiv
@@ -73,20 +154,22 @@ mulBiv (BivPoly cs1) (BivPoly cs2) =
     addCoefs xs []         = xs
     addCoefs (x:xs) (y:ys) = qAddPoly x y : addCoefs xs ys
 
--- | Convert a QPoly p(y) to a BivPoly
+-- | Embed a 'QPoly' in @y@ as a 'BivPoly' (treating the 'QPoly'
+-- coefficients as rationals, each becoming a constant polynomial in @x@).
 qPolyToBiv :: QPoly -> BivPoly
 qPolyToBiv (QPoly cs) = BivPoly (map (\c -> QPoly [c]) cs)
 
--- | The bivariate polynomial (x - y)
+-- | The bivariate polynomial @x − y@.
 xMinusY :: BivPoly
 xMinusY = BivPoly [QPoly [0, 1], QPoly [-1]]
 
--- | Compute (x - y)^n as a BivPoly
+-- | The bivariate polynomial @(x − y)^n@.
 xMinusYPow :: Int -> BivPoly
 xMinusYPow 0 = BivPoly [QPoly [1]]
 xMinusYPow n = mulBiv xMinusY (xMinusYPow (n-1))
 
--- | Substitute (x-y) for the variable in q(t) to get q(x-y) as BivPoly
+-- | Substitute @(x − y)@ for the variable of a 'QPoly', giving
+-- @q(x − y)@ as a 'BivPoly'.
 substituteXMinusY :: QPoly -> BivPoly
 substituteXMinusY (QPoly cs) =
   foldr addBiv zeroBiv
@@ -95,11 +178,13 @@ substituteXMinusY (QPoly cs) =
     , c /= 0
     ]
 
--- | Pseudo-division of BivPolys over QPoly coefficients
+-- | Pseudo-division of 'BivPoly' values: multiply @a@ by
+-- @lc(b)^delta@ before dividing so that the division is exact
+-- over 'QPoly' coefficients. Returns @(delta, quotient, remainder)@.
 pseudoDivBiv :: BivPoly -> BivPoly -> (Int, BivPoly, BivPoly)
 pseudoDivBiv a b
-  | bivDegree b < 0 = error "Division by zero BivPoly"
-  | bivDegree a < bivDegree b = (0, zeroBiv, a)
+  | bivDegree b < 0            = error "Division by zero BivPoly"
+  | bivDegree a < bivDegree b  = (0, zeroBiv, a)
   | otherwise =
       let delta = bivDegree a - bivDegree b + 1
           lcb   = bivLeadingCoeff b
@@ -107,7 +192,7 @@ pseudoDivBiv a b
           (q,r) = divModBiv a' b
       in (delta, q, r)
 
--- | Euclidean division of BivPolys
+-- | Euclidean division of 'BivPoly' values in @y@.
 divModBiv :: BivPoly -> BivPoly -> (BivPoly, BivPoly)
 divModBiv a b
   | bivDegree a < bivDegree b = (zeroBiv, a)
@@ -124,11 +209,14 @@ divModBiv a b
               r'     = bivStrip $ subBiv r (mulBiv term b)
           in go r' (addBiv acc term)
 
--- | Divide two QPolys exactly (real division, see LimCalc.QPoly.qDivModPoly)
+-- | Exact polynomial quotient, alias for 'qQuotPoly'.
 qDivPoly :: QPoly -> QPoly -> QPoly
 qDivPoly = qQuotPoly
 
--- | Subresultant PRS of two BivPolys
+-- | Subresultant pseudo-remainder sequence of two 'BivPoly' values.
+--
+-- Returns the full sequence of subresultants, from which the GCD
+-- can be extracted. Used internally by the resultant computation.
 subresultantPRS :: BivPoly -> BivPoly -> [BivPoly]
 subresultantPRS p q
   | bivDegree p < bivDegree q = subresultantPRS q p
@@ -150,18 +238,15 @@ subresultantPRS p q
     negQPow q n  = qScalePoly ((-1)^n) (qPow q n)
     negQPoly (QPoly cs) = QPoly (map negate cs)
 
--- | Divide every coefficient of a BivPoly by a QPoly scalar.
+-- | Divide every 'QPoly' coefficient of a 'BivPoly' by a 'QPoly'
+-- scalar, asserting that every division is exact.
 --
--- This division is mathematically guaranteed exact by the
--- subresultant PRS algorithm (beta' is constructed so that it
--- exactly divides every coefficient of r at each step). A nonzero
--- remainder indicates an internal algorithmic error -- previously
--- this used a stubbed "invert and multiply" approach (qInvPoly) that
--- only worked when beta' was degree 0 and silently no-op'd
--- otherwise, corrupting the PRS recursion for any case where beta'
--- was a genuine non-constant polynomial in x (which is the typical
--- case once BivPoly coefficients are themselves QPolys in x, as they
--- are throughout this module).
+-- The subresultant PRS algorithm constructs @beta'@ so that it
+-- exactly divides every coefficient of the remainder at each step.
+-- A nonzero remainder here indicates an internal algorithmic error.
+-- An earlier stub using "invert and multiply" only worked for
+-- degree-0 divisors and silently no-op'd otherwise, corrupting the
+-- PRS recursion.
 divBivByQPoly :: BivPoly -> QPoly -> BivPoly
 divBivByQPoly (BivPoly cs) divisor =
   BivPoly [ checkedQuot c divisor | c <- cs ]
@@ -175,22 +260,20 @@ divBivByQPoly (BivPoly cs) divisor =
               \(nonzero remainder) -- this indicates an algorithmic \
               \error, not expected for valid subresultant input")
 
--- | Convert a QPoly (polynomial in x) into a Poly QPoly with a
--- single constant coefficient -- i.e. embed it as a "constant in y"
--- bivariate polynomial, viewed as a univariate polynomial in y over
--- the coefficient ring QPoly (polynomials in x).
+-- | Embed a 'QPoly' in @x@ as a constant polynomial in @y@
+-- (a @'Poly.Poly' 'QPoly'@ with a single coefficient).
 qPolyAsConstInY :: QPoly -> Poly.Poly QPoly
 qPolyAsConstInY p = Poly.Poly "y" [p]
 
--- | p(y), the bivariate polynomial viewed as a Poly QPoly in y with
--- QPoly-in-x coefficients pulled directly from p's own coefficients
--- (each coefficient ci of p becomes the constant QPoly [ci]).
+-- | View a 'QPoly' @p(t)@ as a @'Poly.Poly' 'QPoly'@ in @y@, with
+-- each rational coefficient @cᵢ@ becoming the constant polynomial
+-- @QPoly [cᵢ]@.
 asPolyInY :: QPoly -> Poly.Poly QPoly
 asPolyInY (QPoly cs) = Poly.Poly "y" (map (\c -> QPoly [c]) cs)
 
--- | q(x - y) as a Poly QPoly in y: substitute (x - y) for the
--- variable of q, giving a polynomial in y whose coefficients are
--- QPolys in x.
+-- | Substitute @(x − y)@ for the variable of a 'QPoly', returning
+-- @q(x − y)@ as a @'Poly.Poly' 'QPoly'@ in @y@ with 'QPoly'-in-@x@
+-- coefficients.
 substXMinusYAsPolyInY :: QPoly -> Poly.Poly QPoly
 substXMinusYAsPolyInY (QPoly cs) =
   foldr Poly.addPoly (Poly.Poly "y" [])
@@ -202,16 +285,18 @@ substXMinusYAsPolyInY (QPoly cs) =
     xMinusYPolyInY :: Int -> Poly.Poly QPoly
     xMinusYPolyInY 0 = Poly.Poly "y" [QPoly [1]]
     xMinusYPolyInY n = Poly.mulPoly xMinusY1 (xMinusYPolyInY (n - 1))
-    xMinusY1 = Poly.Poly "y" [QPoly [0, 1], QPoly [-1]]  -- x + (-1)*y
+    xMinusY1 = Poly.Poly "y" [QPoly [0, 1], QPoly [-1]]
 
--- | y^deg(q) * q(x/y) as a Poly QPoly in y -- the multiplicative
--- substitution. For q(t) = sum c_k t^k (degree d), this is
--- sum c_k * x^k * y^(d-k), a genuine polynomial in y (no negative
--- powers), with QPoly-in-x coefficients c_k * x^k.
+-- | Substitute @x\/y@ for the variable of @q@, returning
+-- @y^deg(q) · q(x\/y)@ as a @'Poly.Poly' 'QPoly'@ in @y@.
+--
+-- For @q(t) = ∑ cₖ tᵏ@ of degree @d@, this is @∑ cₖ · xᵏ · y^(d−k)@,
+-- a genuine polynomial in @y@ (no negative powers) with
+-- 'QPoly'-in-@x@ coefficients @cₖ · xᵏ@.
 substXOverYAsPolyInY :: QPoly -> Poly.Poly QPoly
 substXOverYAsPolyInY q@(QPoly cs) =
   let d = qDegree q
-      terms = [ (d - k, QPoly (replicate k 0 ++ [c]))  -- c * x^k, as a QPoly in x
+      terms = [ (d - k, QPoly (replicate k 0 ++ [c]))
               | (k, c) <- zip [0 :: Int ..] cs
               , c /= 0
               ]
@@ -219,19 +304,13 @@ substXOverYAsPolyInY q@(QPoly cs) =
       coeffsByDeg = [ sum [ c | (k, c) <- terms, k == n ] | n <- [0 .. maxDeg] ]
   in Poly.Poly "y" coeffsByDeg
 
--- | Resultant of p(y) and q(x - y) over y -- the additive case.
+-- | Compute @res_y(p(y),\ q(x − y))@: the minimal polynomial of
+-- @α + β@ given minimal polynomials @p@ of @α@ and @q@ of @β@.
 --
--- Computes the resultant via cofactor expansion of the Sylvester
--- matrix (cofactorDet), NOT Poly.hs's Gaussian-elimination
--- determinant. Gaussian elimination divides by pivots, which for
--- QPoly coefficients means polynomial quotient (qQuotPoly) -- this
--- silently drops any remainder, which is mathematically unsound
--- whenever an elimination step's division isn't exact. This
--- produced a visibly wrong resultant (x^4 instead of the correct
--- x^4 + 4x^2 for the i+i case). Cofactor expansion only needs ring
--- operations (add, multiply, negate), never division, so it's sound
--- over QPoly even though QPoly isn't a true field. The O(n!) cost is
--- acceptable here since the polynomials involved are low degree.
+-- Uses cofactor expansion ('cofactorDet') rather than Gaussian
+-- elimination to avoid the unsoundness of polynomial division over
+-- 'QPoly' (see module header). The result is reduced to its
+-- squarefree radical via 'squarefreeRadical'.
 addResultantBiv :: QPoly -> QPoly -> QPoly
 addResultantBiv pa pb =
   let pY  = asPolyInY pa
@@ -239,10 +318,11 @@ addResultantBiv pa pb =
       res = sylvesterResultantRing pY qY
   in squarefreeRadical res
 
--- | Resultant of p(y) and y^deg(q) * q(x/y) over y -- the
--- multiplicative case. See addResultantBiv for why cofactor
--- expansion is used instead of Poly.hs's Gaussian-elimination
--- resultant.
+-- | Compute @res_y(p(y),\ y^n · q(x\/y))@: the minimal polynomial of
+-- @α · β@ given minimal polynomials @p@ of @α@ and @q@ of @β@.
+--
+-- See 'addResultantBiv' for the rationale for using cofactor
+-- expansion.
 mulResultantBiv :: QPoly -> QPoly -> QPoly
 mulResultantBiv pa pb =
   let pY  = asPolyInY pa
@@ -250,12 +330,17 @@ mulResultantBiv pa pb =
       res = sylvesterResultantRing pY qY
   in squarefreeRadical res
 
--- | Resultant via cofactor expansion of the Sylvester matrix, sound
--- over any commutative ring (only uses +, -, * -- never division).
--- Reuses Poly.hs's sylvesterMatrix construction (that part is purely
--- additive/multiplicative bookkeeping, not division-based, so it's
--- safe to reuse), but computes the determinant via cofactor
--- expansion instead of Poly.hs's Gaussian-elimination determinant.
+-- | Resultant via cofactor (Laplace) expansion of the Sylvester
+-- matrix, sound over any commutative ring.
+--
+-- Uses only ring operations (@+@, @−@, @×@), never division, making
+-- it correct for 'QPoly' coefficients. Gaussian elimination was
+-- previously used but is unsound here because it requires exact
+-- polynomial division at each pivot step, which 'qQuotPoly' silently
+-- approximates by dropping remainders — producing a visibly wrong
+-- resultant (e.g. @x^4@ instead of @x^4 + 4x^2@ for the @i + i@
+-- case). The @O(n!)@ complexity is acceptable for the small matrices
+-- arising from low-degree minimal polynomials.
 sylvesterResultantRing :: Poly.Poly QPoly -> Poly.Poly QPoly -> QPoly
 sylvesterResultantRing p q
   | Poly.degree p < 0 || Poly.degree q < 0 = QPoly []
@@ -263,12 +348,13 @@ sylvesterResultantRing p q
       let mat = Poly.sylvesterMatrix p q
       in cofactorDet mat
 
--- | Determinant via cofactor (Laplace) expansion along the first
--- row. Sound over any commutative ring: only uses ring operations,
--- never division. O(n!) -- intended for the small matrices that
--- arise from resultants of low-degree polynomials, not general use.
+-- | Determinant via cofactor (Laplace) expansion along the first row.
+--
+-- Sound over any commutative ring: only uses @+@, @−@, @×@. Intended
+-- for small matrices (the Sylvester matrices of low-degree
+-- polynomials); @O(n!)@ complexity makes it impractical for large @n@.
 cofactorDet :: (Num a) => [[a]] -> a
-cofactorDet []          = 1  -- determinant of the empty matrix
+cofactorDet []          = 1
 cofactorDet [[x]]       = x
 cofactorDet mat@(row:_) =
   sum [ sign j * (row !! j) * cofactorDet (minor mat 0 j)
@@ -282,23 +368,27 @@ cofactorDet mat@(row:_) =
       , i /= r
       ]
 
--- | Reduce a QPoly to its squarefree radical (product of distinct
--- irreducible factors, each to the first power), via Poly.hs's
--- already-correct Yun's-algorithm squarefree factorization. The raw
--- resultant from addResultantBiv/mulResultantBiv generally has
--- repeated factors; this removes the multiplicity while leaving the
--- root SET unchanged, which is what the caller's root-finding step
--- needs (it picks one specific root by proximity, so multiplicity is
--- irrelevant once a root is chosen).
+-- | Reduce a 'QPoly' to its squarefree radical — the product of its
+-- distinct irreducible factors, each to the first power.
+--
+-- The raw resultants from 'addResultantBiv' and 'mulResultantBiv'
+-- typically have repeated factors. 'squarefreeRadical' removes
+-- multiplicities via Yun's algorithm (through 'LimCalc.Poly.squarefree'),
+-- leaving the root set unchanged. Multiplicity is irrelevant for
+-- 'LimCalc.AlgNum.refineToRoot', which selects a root by proximity.
 squarefreeRadical :: QPoly -> QPoly
 squarefreeRadical p =
   let asPolyX = Poly.Poly "x" (qPolyCoef p)
       factors = Poly.squarefree asPolyX
   in case factors of
-       [] -> p  -- already squarefree (or zero/degenerate)
+       [] -> p
        _  -> QPoly (Poly.polyCoef (foldr1 Poly.mulPoly (map fst factors)))
 
--- | Additive resultant: res_y(p(y), q(x-y))
+-- | Additive resultant with a fast path for degree-1 inputs.
+--
+-- For degree-1 polynomials @p(y) = y − a@ and @q(y) = y − b@, the
+-- minimal polynomial of @a + b@ is simply @y − (a + b)@, computed
+-- directly without matrix construction.
 addResultantQ :: QPoly -> QPoly -> QPoly
 addResultantQ pa pb
   | qDegree pa == 1 && qDegree pb == 1 =
@@ -307,12 +397,14 @@ addResultantQ pa pb
       in QPoly [negate (a+b), 1]
   | otherwise = addResultantBiv pa pb
 
--- | Multiplicative resultant: res_y(p(y), y^n * q(x/y))
+-- | Multiplicative resultant with a fast path for degree-1 inputs.
+--
+-- For degree-1 polynomials @p(y) = y − a@ and @q(y) = y − b@, the
+-- minimal polynomial of @a · b@ is simply @y − ab@, computed
+-- directly without matrix construction.
 mulResultantQ :: QPoly -> QPoly -> QPoly
 mulResultantQ pa pb
   | qDegree pa == 1 && qDegree pb == 1 =
-      -- p(y) = y - a, q(y) = y - b
-      -- minimal poly of a*b is y - a*b
       let a = negate (head (qPolyCoef pa))
           b = negate (head (qPolyCoef pb))
       in QPoly [negate (a*b), 1]

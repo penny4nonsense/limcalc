@@ -1,4 +1,67 @@
-module LimCalc.Risch.Primitive where
+-- | Risch algorithm: primitive (logarithmic) case.
+--
+-- Implements integration of rational functions @p(x)\/q(x)@ over a
+-- primitive differential field extension — the core of the Risch
+-- algorithm for the case where no exponential extension is present.
+--
+-- = Algorithm outline
+--
+-- 1. /Hermite reduction/ ('LimCalc.RationalFunction.hermiteReduce'):
+--    split @f = g' + h@ where @g@ is a rational function (rational
+--    integral part) and @h@ is a proper fraction over a squarefree
+--    denominator.
+--
+-- 2. /Rothstein-Trager/ ('rothsteinTrager'): determine whether @h@
+--    has an elementary integral by computing the resultant polynomial
+--    @R(z) = res_x(d, a − z·d')@ and checking whether its roots are
+--    rational. If so, the integral is @∑ cᵢ · log(gcd(d, a − cᵢ·d'))@.
+--    If not, the integral is non-elementary.
+--
+-- = AlgNum coefficients
+--
+-- The implementation is generalised from @RatFun Double@ to
+-- @RatFun AlgNum@ to support the trig integration path in
+-- 'LimCalc.Risch.Exponential', which introduces genuinely complex
+-- coefficients via the Euler substitution @t = e^(ix)@. All existing
+-- arithmetic (@hermiteReduce@, @gcdPoly@, etc.) carries through
+-- unchanged via 'AlgNum'\'s 'Num' and 'Fractional' instances.
+--
+-- = Rational vs complex roots
+--
+-- 'rothsteinTrager' uses 'findRationalRoots' (not 'findComplexRoots')
+-- because the classical elementary\/non-elementary criterion for
+-- integration over @ℚ(x)@ requires the resultant's roots to be
+-- /rational/. Allowing any complex root would always declare the
+-- integral elementary (with complex-coefficient logarithms), silently
+-- misclassifying genuinely non-elementary-over-the-reals integrals
+-- like @1\/(x²+1)@. 'LimCalc.Risch.Exponential' uses
+-- 'findComplexRoots' instead, since that module deliberately extends
+-- the field to include @i@.
+module LimCalc.Risch.Primitive
+  ( -- * Integration
+    integratePrimitive
+  , PrimitiveResult (..)
+    -- * Rothstein-Trager
+  , rothsteinTrager
+  , logDerivativeCheck
+  , resultantPoly
+    -- * Root finding
+  , findRationalRoots
+  , findComplexRoots
+  , snapToRational
+    -- * Interpolation
+  , interpolate
+  , lagrangeBasis
+    -- * Partial fractions
+  , partialFractions
+    -- * Conversion utilities
+  , polyToExpr
+  , ratFunToExpr
+  , algNumToExpr
+  , algNumToRational
+  , complexToAlgNum
+  , addExpr
+  ) where
 
 import Data.Complex (Complex, realPart, imagPart)
 import Data.List (minimumBy)
@@ -10,23 +73,22 @@ import LimCalc.Expr
 import LimCalc.AlgNum
 import LimCalc.QPoly (QPoly(..))
 
--- | Result of the Risch algorithm for the primitive case
+-- | Result of the Risch primitive-case integration algorithm.
 data PrimitiveResult
   = PrimitiveElementary Expr
+    -- ^ The integral is elementary; the 'Expr' is the antiderivative.
   | PrimitiveNonElementary
+    -- ^ The integral is non-elementary (Rothstein-Trager found no
+    -- rational roots for the resultant polynomial).
   | PrimitiveError String
+    -- ^ An internal error occurred.
   deriving (Show, Eq)
 
--- | Integrate a rational function in the primitive case
+-- | Integrate a rational function in the primitive (logarithmic) case.
 --
--- Generalized from RatFun Double to RatFun AlgNum: trig integration
--- (sin/cos via Euler's formula, e^(i*theta)) produces genuinely
--- complex coefficients, which Double cannot represent. AlgNum's
--- Num/Fractional instances let all the existing arithmetic
--- (hermiteReduce, gcdPoly, etc.) carry through unchanged; what
--- actually needed rewriting was root-finding (see findComplexRoots)
--- and Expr conversion (see algNumToExpr), both of which assumed real
--- rational coefficients.
+-- Applies Hermite reduction followed by Rothstein-Trager. Returns the
+-- antiderivative as an 'Expr' if elementary, or 'PrimitiveNonElementary'
+-- if the Rothstein-Trager criterion fails.
 integratePrimitive :: RatFun AlgNum -> DiffField -> PrimitiveResult
 integratePrimitive rf field =
   let (g, reduced) = hermiteReduce rf
@@ -42,27 +104,23 @@ integratePrimitive rf field =
              gExpr = ratFunToExpr g
          in PrimitiveElementary (addExpr gExpr logPart)
 
--- | Rothstein-Trager algorithm
+-- | Rothstein-Trager algorithm for the primitive case.
 --
--- Uses findRationalRoots, NOT findComplexRoots: the classical
--- elementary/non-elementary criterion for ordinary rational-function
--- integration over Q(x) genuinely requires the resultant's roots to
--- be RATIONAL, not merely complex. Allowing any complex root (as
--- findComplexRoots does) answers a different, less restrictive
--- question -- "can this be integrated if I'm willing to introduce
--- complex-coefficient logarithms" -- which is always satisfiable and
--- silently misclassifies genuinely non-elementary-over-the-reals
--- integrals like 1/(x^2+1) (whose antiderivative is arctan(x), not
--- expressible with rational-coefficient logs) as Elementary. See
--- Risch.Exponential's use of findComplexRoots for the case where
--- this distinction does NOT apply (there, the field has already
--- been deliberately extended to include i, so complex roots are the
--- right question).
+-- Given a proper fraction @a\/d@ over a squarefree denominator @d@,
+-- computes the resultant polynomial @R(z) = res_x(d, a − z·d')@
+-- and finds its rational roots @c₁, …, cₙ@. The integral is then
+-- @∑ cᵢ · log(gcd(d, a − cᵢ·d'))@.
+--
+-- Detects the log-derivative case @a = c·d'@ directly via
+-- 'logDerivativeCheck', bypassing the resultant computation (which
+-- degenerates in this case).
+--
+-- Returns @Left \"NonElementary\"@ if no rational roots are found.
 rothsteinTrager :: RatFun AlgNum -> DiffField -> Either String [(AlgNum, Poly AlgNum)]
 rothsteinTrager (RatFun a d) field =
   let d' = diffPoly d
   in case logDerivativeCheck a d d' of
-       Just c  -> Right [(c, d)]  -- int c*(d'/d) dx = c*log(d)
+       Just c  -> Right [(c, d)]
        Nothing ->
          let rPoly = resultantPoly a d d'
          in case findRationalRoots rPoly of
@@ -73,15 +131,12 @@ rothsteinTrager (RatFun a d) field =
                       , not (isAlgZero c)
                       ]
 
--- | Check whether a = c * d' for some constant AlgNum c (the
--- log-derivative case). If so, return Just c; otherwise Nothing.
+-- | Check whether @a = c · d'@ for some constant @c@.
 --
--- This is the edge case where the integrand is a scalar multiple of
--- the logarithmic derivative of the denominator: int c*(d'/d) dx =
--- c*log(d). The Rothstein-Trager resultant machinery degenerates in
--- this case (the resultant polynomial has a root at z=c whose GCD
--- computation gives back all of d rather than a proper factor), so
--- we detect and handle it directly.
+-- This is the log-derivative edge case: @∫ c · (d'\/d) dx = c · log(d)@.
+-- The Rothstein-Trager resultant degenerates in this case (the
+-- resultant has a root at @z = c@ but the GCD computation gives back
+-- all of @d@), so it is detected and handled directly.
 logDerivativeCheck :: Poly AlgNum -> Poly AlgNum -> Poly AlgNum -> Maybe AlgNum
 logDerivativeCheck a _ d'
   | degree d' < 0 = Nothing
@@ -94,11 +149,11 @@ logDerivativeCheck a _ d'
   where
     isZeroPoly p = degree p < 0
 
--- | Compute the Rothstein-Trager resultant polynomial R(z)
+-- | Compute the Rothstein-Trager resultant polynomial
+-- @R(z) = res_x(d, a − z·d')@.
 --
--- Interpolation itself is generic arithmetic and works unchanged
--- over AlgNum; only the evaluation points needed to become AlgNum
--- (via fromInteger, which AlgNum's Num instance already supports).
+-- Evaluates the resultant at @2·deg(d) + 1@ integer points and
+-- reconstructs the polynomial by Lagrange interpolation.
 resultantPoly :: Poly AlgNum -> Poly AlgNum -> Poly AlgNum -> Poly AlgNum
 resultantPoly a d d' =
   let n      = degree d
@@ -106,14 +161,14 @@ resultantPoly a d d' =
       values = [ resultant d (subPoly a (scalePoly z d')) | z <- points ]
   in interpolate (polyVar d) (zip points values)
 
--- | Lagrange interpolation
+-- | Lagrange interpolation through a set of @(x, y)@ pairs.
 interpolate :: String -> [(AlgNum, AlgNum)] -> Poly AlgNum
 interpolate x points =
   foldr (addPoly . lagrangeBasis x points)
         (zeroPoly x)
         (zip [0..] points)
 
--- | One Lagrange basis polynomial
+-- | One Lagrange basis polynomial for the @i@th interpolation point.
 lagrangeBasis :: String -> [(AlgNum, AlgNum)] -> (Int, (AlgNum, AlgNum)) -> Poly AlgNum
 lagrangeBasis x points (i, (xi, yi)) =
   let others = [ (j, xj) | (j, (xj, _)) <- zip [0..] points, j /= i ]
@@ -124,19 +179,17 @@ lagrangeBasis x points (i, (xi, yi)) =
     mulBasis (_, xj) p =
       mulPoly p (subPoly (Poly x [0, 1]) (constPoly x xj))
 
--- | Find rational (real, zero-imaginary-part) roots of a polynomial
--- with AlgNum coefficients, for the classical Rothstein-Trager
--- elementary/non-elementary criterion (see rothsteinTrager's header
--- for why this must be rational-only, not findComplexRoots's full
--- complex-root version).
+-- | Find rational (real, negligible imaginary part) roots of a
+-- polynomial with 'AlgNum' coefficients.
 --
--- Built on top of findComplexRoots: find all complex roots
--- numerically, then keep only those with negligible imaginary part,
--- verifying each by evaluating the polynomial there. This replaces
--- the old approach (enumerating rational candidates via divisor
--- factorization of the constant/leading coefficients), which only
--- ever worked for genuinely rational (Double) coefficients and
--- cannot be meaningfully generalized to AlgNum coefficients at all.
+-- Used by 'rothsteinTrager' for the classical elementary\/non-elementary
+-- criterion, which requires rational roots specifically. Built on top
+-- of 'findComplexRoots': find all complex roots numerically, then
+-- retain only those with negligible imaginary part, snapping each to
+-- the nearest rational @p\/q@ with @|q| ≤ 100@.
+--
+-- Returns 'Nothing' if no rational roots are found and the degree is
+-- positive (indicating the integral is non-elementary).
 findRationalRoots :: Poly AlgNum -> Maybe [AlgNum]
 findRationalRoots p
   | degree p < 0 = Just []
@@ -144,55 +197,41 @@ findRationalRoots p
       case findComplexRoots p of
         Nothing -> Nothing
         Just allRoots ->
-          let -- Snap real roots to nearby rationals, then verify
-              snapped    = [ snapToRational r | r <- allRoots, isReal r ]
-              realRoots  = [ r | r <- snapped, verifiedRoot r ]
+          let snapped   = [ snapToRational r | r <- allRoots, isReal r ]
+              realRoots = [ r | r <- snapped, verifiedRoot r ]
           in if null realRoots && degree p > 0
                then Nothing
                else Just realRoots
   where
     isReal r       = abs (algImagDouble r) < 1e-6
     verifiedRoot r = abs (algToDouble (evalPoly p r)) < 1e-4
-    -- Snap an AlgNum to the nearest rational p/q with |q| <= 100.
-    -- The Rothstein-Trager resultant has rational coefficients when
-    -- the input rational function has rational coefficients, so its
-    -- rational roots are exactly representable as rationals.
-    -- Durand-Kerner finds them approximately; this corrects the
-    -- precision so that downstream GCD computations work exactly.
-    snapToRational r =
-      let x = algToDouble r
-          best = minimumBy (\a b -> compare (abs (algToDouble a - x))
-                                            (abs (algToDouble b - x)))
-                   [ fromQ (p' % q')
-                   | q' <- [1..100]
-                   , p' <- [ round (x * fromIntegral q') ]
-                   ]
-      in if abs (algToDouble best - x) < 1e-4 then best else r
 
--- | Find all complex roots of a polynomial with AlgNum coefficients.
+-- | Snap an 'AlgNum' to the nearest rational @p\/q@ with @|q| ≤ 100@.
 --
--- Previously (findRationalRoots) this enumerated rational root
--- candidates via divisor factorization of the constant and leading
--- coefficients -- meaningless once coefficients are AlgNum rather
--- than rational. Replaced with genuine complex root-finding by
--- approximating each AlgNum coefficient to a Rational (via its
--- Double midpoint) and reusing AlgNum's existing durandKerner
--- machinery directly.
+-- The Rothstein-Trager resultant has rational coefficients (when the
+-- input has rational coefficients), so its roots are exactly rational.
+-- Durand-Kerner finds them approximately; this corrects the precision
+-- so that downstream GCD computations work correctly.
+snapToRational :: AlgNum -> AlgNum
+snapToRational r =
+  let x    = algToDouble r
+      best = minimumBy (\a b -> compare (abs (algToDouble a - x))
+                                        (abs (algToDouble b - x)))
+               [ fromQ (p' % q')
+               | q' <- [1..100]
+               , p' <- [ round (x * fromIntegral q') ]
+               ]
+  in if abs (algToDouble best - x) < 1e-4 then best else r
+
+-- | Find all complex roots of a polynomial with 'AlgNum' coefficients.
 --
--- This is consistent in spirit with the rest of the module's
--- already-approximate transcendental functions (algSin, algExp,
--- etc.); the polynomial's own coefficients are already only
--- Double-approximated AlgNum values by the time they reach this
--- resultant/interpolation pipeline, so there is no loss of rigor
--- relative to the rest of the pipeline by also approximating here.
+-- Approximates each 'AlgNum' coefficient as a 'Rational' via its
+-- 'Double' midpoint, then applies 'LimCalc.AlgNum.durandKerner'.
+-- Returns 'Nothing' only for degenerate input (degree < 1).
 --
--- IMPORTANT: this finds ANY complex root, not just rational ones.
--- Risch.Primitive's own rothsteinTrager uses findRationalRoots
--- instead, since the classical elementary/non-elementary criterion
--- for integration over Q(x) requires rational roots specifically.
--- This function (findComplexRoots) remains correct and necessary for
--- Risch.Exponential's trig-integration use, where the field has
--- already been deliberately extended to include i.
+-- Used directly by 'LimCalc.Risch.Exponential', where the field has
+-- been extended to include @i@ and complex roots are the correct
+-- criterion. 'rothsteinTrager' uses 'findRationalRoots' instead.
 findComplexRoots :: Poly AlgNum -> Maybe [AlgNum]
 findComplexRoots p
   | degree p < 0 = Just []
@@ -203,15 +242,12 @@ findComplexRoots p
          then Nothing
          else Just (map complexToAlgNum roots)
 
--- | Approximate an AlgNum as a Rational via its Double midpoint, for
--- feeding into Durand-Kerner (which only needs approximate numeric
--- coefficients, not exact algebraic ones).
+-- | Approximate an 'AlgNum' as a 'Rational' via its 'Double' midpoint.
+-- Used to construct approximate input for Durand-Kerner.
 algNumToRational :: AlgNum -> Rational
 algNumToRational = toRational . algToDouble
 
--- | Lift a Complex Double root (from durandKerner) back to an
--- AlgNum, by directly constructing real + imaginary*i from the
--- rounded Double parts.
+-- | Lift a 'Complex Double' root (from Durand-Kerner) to an 'AlgNum'.
 complexToAlgNum :: Complex Double -> AlgNum
 complexToAlgNum z =
   let re = realPart z
@@ -220,7 +256,7 @@ complexToAlgNum z =
        then fromQ (toRational re)
        else fromQ (toRational re) + fromQ (toRational im) * algI
 
--- | Convert a polynomial to an Expr
+-- | Convert a 'Poly AlgNum' to an 'Expr'.
 polyToExpr :: Poly AlgNum -> Expr
 polyToExpr (Poly _ [])  = Const 0
 polyToExpr (Poly x cs)  =
@@ -230,20 +266,24 @@ polyToExpr (Poly x cs)  =
   where
     termToExpr _ 0 c = algNumToExpr c
     termToExpr x 1 c = Mul (algNumToExpr c) (Var x)
-    termToExpr x n c = Mul (algNumToExpr c) (Pow (Var x) (Const (fromIntegral (n :: Int))))
+    termToExpr x n c = Mul (algNumToExpr c)
+                           (Pow (Var x) (Const (fromIntegral (n :: Int))))
 
--- | Convert a rational function to an Expr
+-- | Convert a 'RatFun AlgNum' to an 'Expr'.
+-- If the denominator is 1, returns just the numerator expression.
 ratFunToExpr :: RatFun AlgNum -> Expr
 ratFunToExpr (RatFun p q)
   | degree q == 0 && isAlgZero (leadingCoeff q - algOne) = polyToExpr p
   | otherwise = Div (polyToExpr p) (polyToExpr q)
 
--- | Convert an AlgNum to an Expr, decomposing into real and
--- imaginary Double parts (since Expr's Const is still Double-only --
--- see the project's own note that this is "a placeholder for AlgNum
--- pending full algebraic number implementation"). Produces a plain
--- Const for real values, avoiding a spurious "+ 0*I" for the common
--- case.
+-- | Convert an 'AlgNum' to an 'Expr'.
+--
+-- Produces @Const re@ for real values, @Mul (Const im) I@ for purely
+-- imaginary values, and @Add (Const re) (Mul (Const im) I)@ for
+-- complex values. Avoids a spurious @+ 0·I@ in the common real case.
+--
+-- Note: 'Expr'\'s 'Const' is still @Double@-backed; this is a
+-- known limitation documented in 'LimCalc.Expr'.
 algNumToExpr :: AlgNum -> Expr
 algNumToExpr a =
   let re = algToDouble a
@@ -254,28 +294,25 @@ algNumToExpr a =
               then Mul (Const im) I
               else Add (Const re) (Mul (Const im) I)
 
--- | Add two expressions
+-- | Add two expressions, simplifying @0 + e = e@.
 addExpr :: Expr -> Expr -> Expr
 addExpr (Const 0) e = e
 addExpr e (Const 0) = e
 addExpr e1 e2       = Add e1 e2
--- | Partial fraction decomposition of a proper rational function
--- over AlgNum coefficients.
+
+-- | Partial fraction decomposition of a proper rational function.
 --
--- Uses Rothstein-Trager to extract the irreducible factor structure
--- of the denominator. For each (c, d_i) pair, the corresponding
--- partial fraction term is c * d_i' / d_i. For linear factors
--- (degree 1), d_i' = 1, so this reduces to the standard form c/d_i.
+-- Uses 'rothsteinTrager' to extract the irreducible factor structure
+-- of the denominator. For each linear factor @(x − r)@, computes the
+-- residue coefficient via evaluation at @r@. For higher-degree
+-- irreducible factors, returns the logarithmic-derivative form
+-- @c · d'\/d@.
 --
--- For higher-degree irreducible factors the numerator has degree
--- >= 1 (not the standard Ax+B form), but is mathematically correct
--- as a logarithmic-derivative representation.
---
--- Requires: deg(p) < deg(q). Call ratProperFraction first for
--- improper inputs.
---
--- Returns [rf] unchanged if the denominator is already irreducible
+-- Returns @[rf]@ unchanged if the denominator is already irreducible
 -- or has no rational-coefficient decomposition.
+--
+-- Precondition: @deg(p) < deg(q)@. Call
+-- 'LimCalc.RationalFunction.ratProperFraction' first for improper inputs.
 partialFractions :: RatFun AlgNum -> [RatFun AlgNum]
 partialFractions rf@(RatFun p q) =
   let var   = polyVar p
@@ -291,7 +328,7 @@ partialFractions rf@(RatFun p q) =
     splitFactor var di
       | degree di <= 1 = [di]
       | otherwise =
-          let one = constPoly var algOne
+          let one      = constPoly var algOne
               subterms = partialFractions (RatFun one di)
           in map (\(RatFun _ d) -> d) subterms
 
@@ -318,5 +355,5 @@ partialFractions rf@(RatFun p q) =
 
     polyEq :: Poly AlgNum -> Poly AlgNum -> Bool
     polyEq a b = length (polyCoef a) == length (polyCoef b) &&
-      all (\(ca,cb) -> isAlgZero (algAdd ca (algNeg cb)))
+      all (\(ca, cb) -> isAlgZero (algAdd ca (algNeg cb)))
           (zip (polyCoef a) (polyCoef b))

@@ -1,4 +1,65 @@
-module LimCalc.Expand where
+-- | Log-Puiseux series expansion engine.
+--
+-- 'expand' computes the local log-Puiseux series expansion of an
+-- 'Expr' around a base point @x₀@, producing a 'LogPuiseuxSeries'
+-- in the perturbation variable @h@ such that the series represents
+-- @f(x₀ + h)@.
+--
+-- = Core thesis
+--
+-- The derivative is a limit, so compute it that way: expand
+-- @f(x₀ + h)@ as a log-Puiseux series in @h@ and read off the
+-- @h^1@ coefficient. This produces a system that is mathematically
+-- honest, compositionally elegant, and handles edge cases (poles,
+-- branch points, non-analytic points) naturally.
+--
+-- = Log terms
+--
+-- The expansion type is 'LogPuiseuxSeries', which supports terms of
+-- the form @c · h^p · log(h)^k@. Log terms arise naturally from:
+--
+-- * @log(h)@ — the expansion of @log(x)@ near @x = 0@
+-- * @Ci(h)@, @Ei(h)@ — cosine and exponential integrals near 0
+--
+-- The @Li@ case requires @log(log(h))@, which is outside the current
+-- type; it returns 'Unknown'.
+--
+-- = Taylor series depth
+--
+-- All Taylor series are truncated to 'depth' terms. The default is
+-- 8, which is sufficient for derivative extraction (the @h^1@
+-- coefficient) and limit computation with good numerical stability.
+module LimCalc.Expand
+  ( -- * Expansion
+    expand
+    -- * Series operations
+  , composeSeries
+  , evalSeriesAt
+  , powSeries
+  , invertSeries
+  , geometricSeries
+  , binomialSeries
+  , normalizeW
+  , expandPow
+  , expandPowR
+    -- * Taylor series generators
+  , sinTaylor
+  , cosTaylor
+  , expTaylor
+  , logTaylor
+  , erfTaylor
+  , siTaylor
+  , ciTaylor
+  , eiTaylor
+    -- * Utilities
+  , depth
+  , eulerGamma
+  , factorial
+  , ciCoeff
+  , isPositiveIntegerExp
+  , isOddInteger
+  , maxInvertIters
+  ) where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -8,7 +69,12 @@ import LimCalc.Puiseux
 import LimCalc.Types
 import LimCalc.AlgNum
 
--- | Expand f(point + h*var) as a log-Puiseux series in h
+-- | Expand @f(x₀ + h)@ as a log-Puiseux series in @h@.
+--
+-- @point@ maps each variable name to its base-point value @x₀@.
+-- @var@ is the expansion variable; all other variables in @point@
+-- are treated as constants. The result is a 'LogPuiseuxSeries' in
+-- the perturbation @h@.
 expand :: Expr -> Point -> String -> ExpandResult
 
 -- Constants
@@ -65,20 +131,19 @@ expand (Exp f) point var = do
 
 -- | Log expansion producing log-Puiseux terms.
 --
--- For f(x0 + h) with leading term a*h^alpha (alpha >= 0):
+-- For @f(x₀ + h)@ with leading term @a · h^α@ (@α ≥ 0@):
 --
---   log(f) = log(a * h^alpha * (1 + w))
---           = log(a) + alpha*log(h) + log(1 + w)
+-- @log(f) = log(a · h^α · (1 + w)) = log(a) + α·log(h) + log(1 + w)@
 --
--- where w = f/(a*h^alpha) - 1 has no constant term.
--- log(1+w) is computed via Taylor series since w->0.
--- The alpha*log(h) term is a genuine log-Puiseux term with lpLog=1.
+-- where @w = f\/(a·h^α) − 1@ has no constant term. @log(1+w)@ is
+-- computed via Taylor series. The @α·log(h)@ term is a genuine
+-- log-Puiseux term with @lpLog = 1@.
 --
--- For alpha=0 (f(x0) != 0): reduces to ordinary Taylor expansion of
--- log around x0, no log(h) term produced.
+-- For @α = 0@: reduces to an ordinary Taylor expansion of @log@
+-- around @x₀@, producing no @log(h)@ term.
 --
--- For alpha<0 (pole): return Undefined -- log of a pole is not a
--- log-Puiseux series in any standard sense.
+-- For @α < 0@ (pole): returns 'Undefined' — @log@ of a pole is not
+-- representable as a log-Puiseux series.
 expand (Log f) point var = do
   sf <- expand f point var
   let sf' = stripZeros sf
@@ -114,21 +179,21 @@ expand (Cos f) point var = do
   sf <- expand f point var
   return $ composeSeries cosTaylor sf
 
--- | erf(x) = (2/sqrt(pi)) * (x - x^3/3 + x^5/10 - x^7/42 + ...)
--- Entire function; pure power series at any point via Taylor.
+-- | @erf@ is entire; its expansion at any point is a pure power series
+-- via Taylor.
 expand (Erf f) point var = do
   sf <- expand f point var
   return $ composeSeries erfTaylor sf
 
--- | Si(x) = x - x^3/18 + x^5/600 - x^7/35280 + ...
--- Entire function; pure power series at any point via Taylor.
+-- | @Si@ is entire; its expansion at any point is a pure power series
+-- via Taylor.
 expand (Si f) point var = do
   sf <- expand f point var
   return $ composeSeries siTaylor sf
 
--- | Ci(x) near x0 /= 0: analytic, expand via Taylor.
--- At x0 = 0: Ci(h) = gamma + log(h) + h^2/4 - h^4/96 + ...
--- The log(h) term is a genuine log-Puiseux term with lpLog=1.
+-- | @Ci(x)@ near @x₀ ≠ 0@: analytic, expand via Taylor.
+-- At @x₀ = 0@: @Ci(h) = γ + log(h) + h²\/4 − h⁴\/96 + …@
+-- The @log(h)@ term is a genuine log-Puiseux term with @lpLog = 1@.
 expand (Ci f) point var = do
   sf <- expand f point var
   let x0  = constantTerm sf
@@ -146,9 +211,9 @@ expand (Ci f) point var = do
             | n <- [1..] :: [Int] ]
       return $ addSeries gammaLogH powerTerms
 
--- | Ei(x) near x0 /= 0: analytic, expand via Taylor.
--- At x0 = 0: Ei(h) = gamma + log(h) + h + h^2/4 + h^3/18 + ...
--- The log(h) term is a genuine log-Puiseux term with lpLog=1.
+-- | @Ei(x)@ near @x₀ ≠ 0@: analytic, expand via Taylor.
+-- At @x₀ = 0@: @Ei(h) = γ + log(h) + h + h²\/4 + h³\/18 + …@
+-- The @log(h)@ term is a genuine log-Puiseux term with @lpLog = 1@.
 expand (Ei f) point var = do
   sf <- expand f point var
   let x0  = constantTerm sf
@@ -166,7 +231,8 @@ expand (Ei f) point var = do
             | n <- [1..] :: [Int] ]
       return $ addSeries gammaLogH powerTerms
 
--- | Li(x) requires log(log(x)) near x=0, outside current type.
+-- | @Li@ requires @log(log(h))@ near @x = 0@, which is outside the
+-- current log-Puiseux type.
 expand (Li _) _ _ = Left $ Unknown
   "Li expansion at x=0 requires log(log(h)) -- outside log-Puiseux type; \
   \expansion at x0 /= 0,1 via Taylor not yet implemented"
@@ -175,7 +241,13 @@ expand (Arcsin _) _ _ = Left $ Unknown "Arcsin expansion not yet implemented"
 expand (Arccos _) _ _ = Left $ Unknown "Arccos expansion not yet implemented"
 expand (Arctan _) _ _ = Left $ Unknown "Arctan expansion not yet implemented"
 
--- | Abs expansion (unchanged logic, updated types)
+-- | Expand @|f|@ at a point.
+--
+-- Determines the sign of the leading term of @f@ to decide whether
+-- @|f| = f@ or @|f| = −f@ locally. Returns 'NonAnalytic' when @f@
+-- vanishes at the point with odd-order or fractional-order leading
+-- term (genuine kink), and 'DomainError' when the leading coefficient
+-- is non-real.
 expand (Abs f) point var = do
   sf <- expand f point var
   case leadingTermNZ (stripZeros sf) of
@@ -201,32 +273,38 @@ expand (Abs f) point var = do
 
 -- Helpers
 
+-- | True if @r@ is a positive integer (denominator 1, numerator > 0).
 isPositiveIntegerExp :: Rational -> Bool
 isPositiveIntegerExp r = denominator r == 1 && numerator r > 0
 
+-- | True if @r@ is a positive odd integer.
 isOddInteger :: Rational -> Bool
 isOddInteger r = isPositiveIntegerExp r && odd (numerator r)
 
+-- | Number of Taylor series terms to compute.
 depth :: Int
 depth = 8
 
+-- | Euler-Mascheroni constant, used in @Ci@ and @Ei@ expansions at 0.
 eulerGamma :: Double
 eulerGamma = 0.5772156649015329
 
+-- | Factorial.
 factorial :: Int -> Int
 factorial n = product [1..n]
 
+-- | @n@th coefficient in the power-series part of @Ci(h)@ at @h = 0@.
 ciCoeff :: Int -> Double
 ciCoeff n =
   let sign = if odd n then 1.0 else -1.0
   in sign / (fromIntegral (2*n) * fromIntegral (factorial (2*n)))
 
--- | Compose a Taylor series S with expansion E.
--- For log-Puiseux: only valid when E has no log terms at constant
--- position (i.e. the Taylor series is in a pure-power argument).
--- composeSeries strips log terms from the constant and passes only
--- the pure-power part to the Taylor generator; log terms in the
--- perturbation u are handled by mulSeries (closed under log terms).
+-- | Compose a Taylor series @S@ with an expansion @E@.
+--
+-- Extracts the constant term @c₀@ of @E@, passes it to the Taylor
+-- generator @taylorAt@, then evaluates the resulting series at the
+-- perturbation @u = E − c₀@. Log terms in @u@ are handled correctly
+-- by 'mulSeries'.
 composeSeries :: (AlgNum -> LogPuiseuxSeries AlgNum)
               -> LogPuiseuxSeries AlgNum
               -> LogPuiseuxSeries AlgNum
@@ -236,6 +314,7 @@ composeSeries taylorAt e =
       s  = taylorAt c0
   in evalSeriesAt u s
 
+-- | Evaluate @S = ∑ aₙ · tⁿ@ by substituting @t = u@.
 evalSeriesAt :: LogPuiseuxSeries AlgNum
              -> LogPuiseuxSeries AlgNum
              -> LogPuiseuxSeries AlgNum
@@ -245,6 +324,8 @@ evalSeriesAt u (LogPuiseuxSeries ts) =
     | t <- ts
     ]
 
+-- | Raise a series to a rational power.
+-- Only handles non-negative integer powers; returns the empty series otherwise.
 powSeries :: LogPuiseuxSeries AlgNum -> Rational -> LogPuiseuxSeries AlgNum
 powSeries _ 0 = LogPuiseuxSeries [pureTerm 0 algOne]
 powSeries u n
@@ -253,6 +334,8 @@ powSeries u n
       in foldl mulSeries (LogPuiseuxSeries [pureTerm 0 algOne]) (replicate k u)
   | otherwise = LogPuiseuxSeries []
 
+-- | Compute @w = s\/(a · h^α) − 1@: normalise a series by factoring
+-- out its leading term and subtracting 1.
 normalizeW :: LogPuiseuxSeries AlgNum
            -> LogPuiseuxTerm AlgNum
            -> Rational -> AlgNum
@@ -262,6 +345,7 @@ normalizeW (LogPuiseuxSeries ts) _lt alpha a =
                 | t <- ts ]
   in removeTerm 0 0 (LogPuiseuxSeries shifted)
 
+-- | Invert a series: @1\/s@ via geometric series expansion.
 invertSeries :: LogPuiseuxSeries AlgNum -> LogPuiseuxSeries AlgNum
 invertSeries s =
   case leadingTermNZ (stripZeros s) of
@@ -276,6 +360,7 @@ invertSeries s =
       in stripZeros $ truncateToOrder (fromIntegral depth)
            (shiftExponents shift (scaleSeries (recip a) geo))
 
+-- | Geometric series @(1 + u)^(−1) = ∑ (−u)^n@, iterated by order.
 geometricSeries :: LogPuiseuxSeries AlgNum -> Rational -> LogPuiseuxSeries AlgNum
 geometricSeries u targetOrder =
   case leadingTermNZ (stripZeros u) of
@@ -291,14 +376,17 @@ geometricSeries u targetOrder =
                             (LogPuiseuxSeries [pureTerm 0 algOne])
       in truncateToOrder targetOrder $ foldr addSeries (LogPuiseuxSeries []) upows
 
+-- | Hard cap on geometric-series iterations.
 maxInvertIters :: Int
 maxInvertIters = 200
 
+-- | Dispatch the 'Pow' case on whether the exponent is a numeric constant.
 expandPow :: Expr -> Expr -> Point -> String -> ExpandResult
 expandPow f (Const r) point var       = expandPowR f (toRational r) point var
 expandPow f (Neg (Const r)) point var = expandPowR f (toRational (-r)) point var
 expandPow _ _ _ _                     = Left $ Unknown "Symbolic exponents not yet supported"
 
+-- | Expand @f^r@ for rational @r@ via the generalised binomial series.
 expandPowR :: Expr -> Rational -> Point -> String -> ExpandResult
 expandPowR f r point var = do
   s <- expand f point var
@@ -315,6 +403,7 @@ expandPowR f r point var = do
       in Right $ stripZeros $ truncateToOrder (shift + fromIntegral depth)
            (shiftExponents shift (scaleSeries scale binom))
 
+-- | Generalised binomial series @(1 + w)^r@, iterated by order.
 binomialSeries :: Rational -> LogPuiseuxSeries AlgNum -> Rational -> LogPuiseuxSeries AlgNum
 binomialSeries r w targetOrder =
   case leadingTermNZ (stripZeros w) of
@@ -332,6 +421,8 @@ binomialSeries r w targetOrder =
       in truncateToOrder targetOrder $ foldr addSeries (LogPuiseuxSeries [])
            [ scaleSeries c wp | (c, wp) <- zip bcs wpows ]
 
+-- | Generalised binomial coefficients @C(r, 0) = 1@,
+-- @C(r, k) = r(r−1)···(r−k+1)\/k!@.
 binomCoeffs :: Rational -> Int -> [AlgNum]
 binomCoeffs r n = take (n+1) $ scanl step algOne [0..n-1]
   where
@@ -340,8 +431,11 @@ binomCoeffs r n = take (n+1) $ scanl step algOne [0..n-1]
           kk = fromIntegral (k+1 :: Int)
       in acc * rk / kk
 
+------------------------------------------------------------------------
 -- Taylor series generators
+------------------------------------------------------------------------
 
+-- | Taylor series of @sin@ around @x₀@.
 sinTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 sinTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (sinCoeff n) | n <- [0..] :: [Int] ]
@@ -352,6 +446,7 @@ sinTaylor x0 = LogPuiseuxSeries $ take depth
           bases = cycle [s, c, negate s, negate c]
       in bases !! n / fromIntegral (facts !! n)
 
+-- | Taylor series of @cos@ around @x₀@.
 cosTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 cosTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (cosCoeff n) | n <- [0..] :: [Int] ]
@@ -362,14 +457,14 @@ cosTaylor x0 = LogPuiseuxSeries $ take depth
           bases = cycle [c, negate s, negate c, s]
       in bases !! n / fromIntegral (facts !! n)
 
+-- | Taylor series of @exp@ around @x₀@.
 expTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 expTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (algExp x0 / fromIntegral f)
   | (n, f) <- zip [0..] (scanl (*) 1 [1..] :: [Int]) ]
 
--- | Taylor series of log around x0 /= 0, excluding the constant term.
--- The constant log(x0) is handled separately in the Log expansion;
--- this provides only the h^1, h^2, ... terms for composeSeries.
+-- | Taylor series of @log@ around @x₀ ≠ 0@, excluding the constant
+-- term @log(x₀)@. Used by 'composeSeries' in the 'Log' expansion case.
 logTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 logTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (logCoeff n) | n <- [1..] :: [Int] ]
@@ -378,7 +473,7 @@ logTaylor x0 = LogPuiseuxSeries $ take depth
       let sign = if even n then negate algOne else algOne
       in sign / (fromIntegral n * x0 ^ n)
 
--- | erf Taylor: (2/sqrt(pi)) * sum_{n=0}^{inf} (-1)^n x^(2n+1) / (n! * (2n+1))
+-- | Taylor series of @erf@ around @x₀@.
 erfTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 erfTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral (2*n+1)) (erfCoeff n x0) | n <- [0..] :: [Int] ]
@@ -392,7 +487,7 @@ erfTaylor x0 = LogPuiseuxSeries $ take depth
           pre    = fromRational (toRational twoOverSqrtPi)
       in pre * sign * xpow / (nfact * twon1)
 
--- | Si Taylor: sum_{n=0}^{inf} (-1)^n x^(2n+1) / ((2n+1) * (2n+1)!)
+-- | Taylor series of @Si@ around @x₀@.
 siTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 siTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral (2*n+1)) (siCoeff n x0) | n <- [0..] :: [Int] ]
@@ -404,8 +499,8 @@ siTaylor x0 = LogPuiseuxSeries $ take depth
           xpow  = x ^ (2*n)
       in sign * xpow / denom
 
--- | Ci Taylor around x0 /= 0 (analytic away from 0)
--- At x0=0 the log(h) case is handled directly in expand (Ci f).
+-- | Taylor series of @Ci@ around @x₀ ≠ 0@.
+-- At @x₀ = 0@ the @log(h)@ case is handled directly in 'expand'.
 ciTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 ciTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (ciTaylorCoeff n x0) | n <- [0..] :: [Int] ]
@@ -422,7 +517,8 @@ ciTaylor x0 = LogPuiseuxSeries $ take depth
     ciDerivN 0 xd = ciValue xd
     ciDerivN _ xd = cos xd / xd
 
--- | Ei Taylor around x0 /= 0
+-- | Taylor series of @Ei@ around @x₀ ≠ 0@.
+-- At @x₀ = 0@ the @log(h)@ case is handled directly in 'expand'.
 eiTaylor :: AlgNum -> LogPuiseuxSeries AlgNum
 eiTaylor x0 = LogPuiseuxSeries $ take depth
   [ pureTerm (fromIntegral n) (eiTaylorCoeff n x0) | n <- [0..] :: [Int] ]

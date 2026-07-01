@@ -1,4 +1,52 @@
-module LimCalc.SymExpand where
+-- | Symbolic Puiseux series expansion for differentiation.
+--
+-- 'symExpand' expands @f(x + h)@ as a 'SymPuiseuxSeries' in @h@,
+-- keeping the base variable @x@ symbolic in the coefficients. The
+-- @h^1@ coefficient of the result is the symbolic derivative @f'(x)@,
+-- which 'LimCalc.Calculus.diff' extracts via 'symCoeffAt'.
+--
+-- = Relationship to the numeric expansion path
+--
+-- 'LimCalc.Expand.expand' performs the same conceptual operation but
+-- evaluates coefficients numerically as 'AlgNum' values. 'symExpand'
+-- keeps coefficients symbolic so that the result is an 'Expr' rather
+-- than a number. The Taylor series generators here (@sinSymTaylor@,
+-- @expSymTaylor@, etc.) mirror their numeric counterparts in
+-- 'LimCalc.Expand', but produce 'Expr' coefficients computed via
+-- 'LimCalc.DiffField.deriveBase' rather than numeric evaluation.
+--
+-- = Limitations
+--
+-- Unlike the numeric path, 'symExpand' handles only pure power series
+-- (no @log(h)@ terms). Functions with logarithmic singularities at
+-- generic points ('Li', 'Abs') return 'Unknown'. This is acceptable
+-- for differentiation, since the derivative of a smooth function at
+-- a generic point is always a pure power series.
+module LimCalc.SymExpand
+  ( -- * Symbolic expansion
+    symExpand
+    -- * Taylor series generators
+  , sinSymTaylor
+  , cosSymTaylor
+  , expSymTaylor
+  , logSymTaylor
+  , erfSymTaylor
+  , siSymTaylor
+  , ciSymTaylor
+  , eiSymTaylor
+    -- * Series operations
+  , symEvalSeriesAt
+  , symPowSeries
+  , symInvertSeries
+  , symGeometricSeries
+  , symNormalizeW
+  , symExpandPowR
+  , symBinomialSeries
+  , symBinomCoeffs
+    -- * Utilities
+  , symConstantTerm
+  , depth
+  ) where
 
 import LimCalc.Expr
 import LimCalc.SymPuiseux
@@ -7,53 +55,51 @@ import LimCalc.DiffField (deriveBase)
 import LimCalc.Simplify
 import Data.Ratio (numerator, denominator)
 
--- | Symbolically expand f(x + h) as a Puiseux series in h.
--- var: the variable we are expanding in (x)
--- All other variables remain as Var nodes in the coefficients.
+-- | Symbolically expand @f(x + h)@ as a 'SymPuiseuxSeries' in @h@.
+--
+-- The variable @var@ is the expansion variable; all other variables
+-- remain as 'Var' nodes in the coefficients. The result is a series
+-- @∑ cₙ(x) · h^n@ where each @cₙ(x)@ is an 'Expr'.
+--
+-- The @h^1@ coefficient is the symbolic derivative of @f@ with
+-- respect to @var@, extracted by 'LimCalc.Calculus.diff' via
+-- 'symCoeffAt'.
 symExpand :: Expr -> String -> Either ExpandError SymPuiseuxSeries
 
--- Constants
 symExpand (Const c) _ = Right $ SymPuiseuxSeries [SymPuiseuxTerm 0 (Const c)]
 symExpand Pi        _ = Right $ SymPuiseuxSeries [SymPuiseuxTerm 0 Pi]
 symExpand E         _ = Right $ SymPuiseuxSeries [SymPuiseuxTerm 0 E]
 symExpand I         _ = Right $ SymPuiseuxSeries [SymPuiseuxTerm 0 I]
 
--- Variable
 symExpand (Var name) var
   | name == var =
-      -- expanding in this variable: x + h
       Right $ SymPuiseuxSeries
-        [ SymPuiseuxTerm 0 (Var name)  -- constant term x
-        , SymPuiseuxTerm 1 (Const 1)   -- linear term h
+        [ SymPuiseuxTerm 0 (Var name)
+        , SymPuiseuxTerm 1 (Const 1)
         ]
   | otherwise =
-      -- not the expansion variable: stays symbolic
       Right $ SymPuiseuxSeries [SymPuiseuxTerm 0 (Var name)]
 
--- Addition
 symExpand (Add f g) var = do
   sf <- symExpand f var
   sg <- symExpand g var
   return $ addSymSeries sf sg
 
--- Subtraction
 symExpand (Sub f g) var = do
   sf <- symExpand f var
   sg <- symExpand g var
   return $ addSymSeries sf (scaleSymSeries (Const (-1)) sg)
 
--- Multiplication
 symExpand (Mul f g) var = do
   sf <- symExpand f var
   sg <- symExpand g var
   return $ mulSymSeries sf sg
 
--- Negation
 symExpand (Neg f) var = do
   sf <- symExpand f var
   return $ scaleSymSeries (Const (-1)) sf
 
--- Sin: sin(f(x+h)) via symbolic Taylor series
+-- | @sin(f(x+h))@ via symbolic Taylor series around @f(x)@.
 symExpand (Sin f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -61,7 +107,7 @@ symExpand (Sin f) var = do
       s  = sinSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Cos: cos(f(x+h)) via symbolic Taylor series
+-- | @cos(f(x+h))@ via symbolic Taylor series around @f(x)@.
 symExpand (Cos f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -69,7 +115,7 @@ symExpand (Cos f) var = do
       s  = cosSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Exp: e^f(x+h) via symbolic Taylor series
+-- | @exp(f(x+h))@ via symbolic Taylor series around @f(x)@.
 symExpand (Exp f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -77,7 +123,7 @@ symExpand (Exp f) var = do
       s  = expSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Log
+-- | @log(f(x+h))@ via symbolic Taylor series around @f(x)@.
 symExpand (Log f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -85,24 +131,21 @@ symExpand (Log f) var = do
       s  = logSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Division
 symExpand (Div f g) var = do
   sf <- symExpand f var
   sg <- symExpand g var
   return $ mulSymSeries sf (symInvertSeries sg)
 
--- Power
-symExpand (Pow f (Const r)) var = symExpandPowR f (toRational r) var
+symExpand (Pow f (Const r)) var     = symExpandPowR f (toRational r) var
 symExpand (Pow f (Neg (Const r))) var = symExpandPowR f (toRational (-r)) var
-symExpand (Pow _ _) _ = Left $ Unknown "Symbolic exponents not yet supported"
+symExpand (Pow _ _) _               = Left $ Unknown "Symbolic exponents not yet supported"
 
--- Abs
-symExpand (Abs _) _ = Left $ Unknown "Abs not yet implemented"
+symExpand (Abs _)    _ = Left $ Unknown "Abs not yet implemented"
 symExpand (Arcsin _) _ = Left $ Unknown "Arcsin expansion not yet implemented"
 symExpand (Arccos _) _ = Left $ Unknown "Arccos expansion not yet implemented"
 symExpand (Arctan _) _ = Left $ Unknown "Arctan expansion not yet implemented"
 
--- Erf: analytic everywhere, Taylor series via iterated derivatives
+-- | @erf(f(x+h))@ via symbolic Taylor series. Entire function.
 symExpand (Erf f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -110,7 +153,7 @@ symExpand (Erf f) var = do
       s  = erfSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Si: analytic everywhere (Si(0)=0), Taylor series via iterated derivatives
+-- | @Si(f(x+h))@ via symbolic Taylor series. Entire function.
 symExpand (Si f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -118,9 +161,7 @@ symExpand (Si f) var = do
       s  = siSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Ei: has logarithmic singularity at x=0, but is analytic everywhere
--- else. Taylor series via iterated derivatives around a general point.
--- Ei^(1)(x) = e^x/x, subsequent derivatives via deriveBase.
+-- | @Ei(f(x+h))@ via symbolic Taylor series. Analytic away from @x=0@.
 symExpand (Ei f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -128,8 +169,7 @@ symExpand (Ei f) var = do
       s  = eiSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Ci: same structure as Ei -- analytic away from x=0, logarithmic
--- singularity at 0. Ci^(1)(x) = cos(x)/x.
+-- | @Ci(f(x+h))@ via symbolic Taylor series. Analytic away from @x=0@.
 symExpand (Ci f) var = do
   sf <- symExpand f var
   let c0 = symConstantTerm sf
@@ -137,25 +177,24 @@ symExpand (Ci f) var = do
       s  = ciSymTaylor c0
   return $ symEvalSeriesAt u s
 
--- Li: involves log(log(x)) which requires a different treatment.
--- li(x) = Ei(log(x)), so its series around any point involves
--- a doubly-logarithmic term not supported by symPuiseux.
+-- | @Li@ requires @log(log(x))@; not supported by the symbolic path.
 symExpand (Li _) _ = Left $ Unknown
   "Li expansion not yet implemented: li(x) = Ei(log(x)), \
   \requires doubly-logarithmic Puiseux extension"
 
--- | How many terms
+-- | Number of Taylor series terms to compute.
 depth :: Int
 depth = 6
 
--- | Get the constant term of a symbolic series
+-- | Extract the constant term (@h^0@ coefficient) of a symbolic series.
+-- Returns @Const 0@ if the series is empty or has no constant term.
 symConstantTerm :: SymPuiseuxSeries -> Expr
 symConstantTerm (SymPuiseuxSeries []) = Const 0
 symConstantTerm (SymPuiseuxSeries (t:_))
   | symExp t == 0 = symCoeff t
   | otherwise     = Const 0
 
--- | Evaluate S = Σ aₙ·t^n by substituting t = u (symbolic)
+-- | Evaluate @S = ∑ aₙ · tⁿ@ by substituting @t = u@ symbolically.
 symEvalSeriesAt :: SymPuiseuxSeries -> SymPuiseuxSeries -> SymPuiseuxSeries
 symEvalSeriesAt u (SymPuiseuxSeries ts) =
   foldr addSymSeries zeroSym
@@ -163,7 +202,8 @@ symEvalSeriesAt u (SymPuiseuxSeries ts) =
     | t <- ts
     ]
 
--- | Raise a symbolic series to an integer power
+-- | Raise a symbolic series to a rational power.
+-- Only handles non-negative integer powers; returns the empty series otherwise.
 symPowSeries :: SymPuiseuxSeries -> Rational -> SymPuiseuxSeries
 symPowSeries _ 0 = SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)]
 symPowSeries u n
@@ -172,8 +212,9 @@ symPowSeries u n
       in foldl mulSymSeries (SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)]) (replicate k u)
   | otherwise = SymPuiseuxSeries []
 
--- | Symbolic Taylor series for sin around symbolic x
--- sin(x + h) = sin(x) + cos(x)h - sin(x)h²/2 - cos(x)h³/6 + ...
+-- | Symbolic Taylor series for @sin@ around symbolic @x@.
+--
+-- @sin(x + h) = sin(x) + cos(x)·h − sin(x)·h²\/2 − cos(x)·h³\/6 + …@
 sinSymTaylor :: Expr -> SymPuiseuxSeries
 sinSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (sinSymCoeff n)
@@ -184,11 +225,11 @@ sinSymTaylor x = SymPuiseuxSeries $ take depth
           facts  = scanl (*) 1 [1..] :: [Int]
           base   = bases !! n
           factor = fromIntegral (facts !! n)
-      in if factor == 1
-         then base
-         else Div base (Const factor)
+      in if factor == 1 then base else Div base (Const factor)
 
--- | Symbolic Taylor series for cos around symbolic x
+-- | Symbolic Taylor series for @cos@ around symbolic @x@.
+--
+-- @cos(x + h) = cos(x) − sin(x)·h − cos(x)·h²\/2 + sin(x)·h³\/6 + …@
 cosSymTaylor :: Expr -> SymPuiseuxSeries
 cosSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (cosSymCoeff n)
@@ -199,12 +240,11 @@ cosSymTaylor x = SymPuiseuxSeries $ take depth
           facts  = scanl (*) 1 [1..] :: [Int]
           base   = bases !! n
           factor = fromIntegral (facts !! n)
-      in if factor == 1
-         then base
-         else Div base (Const factor)
+      in if factor == 1 then base else Div base (Const factor)
 
--- | Symbolic Taylor series for exp around symbolic x
--- exp(x + h) = exp(x) + exp(x)h + exp(x)h²/2 + ...
+-- | Symbolic Taylor series for @exp@ around symbolic @x@.
+--
+-- @exp(x + h) = exp(x) + exp(x)·h + exp(x)·h²\/2 + …@
 expSymTaylor :: Expr -> SymPuiseuxSeries
 expSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (expSymCoeff n)
@@ -213,12 +253,11 @@ expSymTaylor x = SymPuiseuxSeries $ take depth
     expSymCoeff n =
       let facts  = scanl (*) 1 [1..] :: [Int]
           factor = fromIntegral (facts !! n)
-      in if factor == 1
-         then Exp x
-         else Div (Exp x) (Const factor)
+      in if factor == 1 then Exp x else Div (Exp x) (Const factor)
 
--- | Symbolic Taylor series for log around symbolic x
--- log(x + h) = log(x) + h/x - h²/(2x²) + ...
+-- | Symbolic Taylor series for @log@ around symbolic @x@.
+--
+-- @log(x + h) = log(x) + h\/x − h²\/(2x²) + h³\/(3x³) − …@
 logSymTaylor :: Expr -> SymPuiseuxSeries
 logSymTaylor x = SymPuiseuxSeries $ take depth $
   SymPuiseuxTerm 0 (Log x) :
@@ -231,9 +270,10 @@ logSymTaylor x = SymPuiseuxSeries $ take depth $
           xpow   = Pow x (Const (fromIntegral n))
       in Div sign (Mul factor xpow)
 
--- | Symbolic Taylor series for Ei around symbolic x.
--- Ei(x + h) = Ei(x) + (e^x/x)h + ...
--- Ei^(n)(x) computed by iterating deriveBase.
+-- | Symbolic Taylor series for @Ei@ around symbolic @x@.
+--
+-- Coefficients are computed by iterating 'deriveBase' on @Ei(x)@.
+-- @Ei'(x) = e^x\/x@; subsequent derivatives follow by the chain rule.
 eiSymTaylor :: Expr -> SymPuiseuxSeries
 eiSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (eiSymCoeff n)
@@ -247,9 +287,10 @@ eiSymTaylor x = SymPuiseuxSeries $ take depth
           factor = fromIntegral (facts !! n)
       in if factor == 1 then d else Div d (Const factor)
 
--- | Symbolic Taylor series for Ci around symbolic x.
--- Ci(x + h) = Ci(x) + (cos(x)/x)h + ...
--- Ci^(n)(x) computed by iterating deriveBase.
+-- | Symbolic Taylor series for @Ci@ around symbolic @x@.
+--
+-- Coefficients are computed by iterating 'deriveBase' on @Ci(x)@.
+-- @Ci'(x) = cos(x)\/x@.
 ciSymTaylor :: Expr -> SymPuiseuxSeries
 ciSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (ciSymCoeff n)
@@ -262,6 +303,11 @@ ciSymTaylor x = SymPuiseuxSeries $ take depth
           facts  = scanl (*) 1 [1..] :: [Int]
           factor = fromIntegral (facts !! n)
       in if factor == 1 then d else Div d (Const factor)
+
+-- | Symbolic Taylor series for @erf@ around symbolic @x@.
+--
+-- Coefficients are computed by iterating 'deriveBase' on @erf(x)@.
+-- @erf'(x) = (2\/√π) · e^(−x²)@.
 erfSymTaylor :: Expr -> SymPuiseuxSeries
 erfSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (erfSymCoeff n)
@@ -275,7 +321,10 @@ erfSymTaylor x = SymPuiseuxSeries $ take depth
           factor = fromIntegral (facts !! n)
       in if factor == 1 then d else Div d (Const factor)
 
--- | Symbolic Taylor series for Si around symbolic x.
+-- | Symbolic Taylor series for @Si@ around symbolic @x@.
+--
+-- Coefficients are computed by iterating 'deriveBase' on @Si(x)@.
+-- @Si'(x) = sin(x)\/x@.
 siSymTaylor :: Expr -> SymPuiseuxSeries
 siSymTaylor x = SymPuiseuxSeries $ take depth
   [ SymPuiseuxTerm (fromIntegral n) (siSymCoeff n)
@@ -289,7 +338,11 @@ siSymTaylor x = SymPuiseuxSeries $ take depth
           factor = fromIntegral (facts !! n)
       in if factor == 1 then d else Div d (Const factor)
 
--- | Invert a symbolic series: 1/s via geometric series
+-- | Invert a symbolic series: @1\/s@ via geometric series expansion.
+--
+-- Factors out the leading term @a · h^alpha@, then computes
+-- @(1\/a) · h^(−alpha) · (1\/(1 + w))@ where @w = s\/(a·h^alpha) − 1@
+-- has no constant term.
 symInvertSeries :: SymPuiseuxSeries -> SymPuiseuxSeries
 symInvertSeries s =
   case symLeadingTerm s of
@@ -304,20 +357,23 @@ symInvertSeries s =
       in shiftSymExponents shift
            (scaleSymSeries (Div (Const 1) a) geo)
 
--- | Geometric series 1/(1+w) = Σ (-w)^n
+-- | Geometric series @1\/(1 + w) = ∑ (−w)^n@, truncated to 'depth' terms.
 symGeometricSeries :: SymPuiseuxSeries -> SymPuiseuxSeries
 symGeometricSeries u =
-  let upows = take (depth+1) $ iterate (truncateSymSeries depth . mulSymSeries u)
-                                       (SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)])
+  let upows = take (depth+1) $
+                iterate (truncateSymSeries depth . mulSymSeries u)
+                        (SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)])
   in truncateSymSeries depth $ foldr addSymSeries zeroSym upows
 
--- | Normalize w = s/(a*h^alpha) - 1
-symNormalizeW :: SymPuiseuxSeries -> SymPuiseuxTerm -> Rational -> Expr -> SymPuiseuxSeries
+-- | Compute @w = s\/(a · h^alpha) − 1@: normalise a series by
+-- factoring out its leading term and subtracting 1.
+symNormalizeW :: SymPuiseuxSeries -> SymPuiseuxTerm -> Rational -> Expr
+              -> SymPuiseuxSeries
 symNormalizeW (SymPuiseuxSeries ts) _lt alpha a =
   let shifted = [ SymPuiseuxTerm (symExp t - alpha) (Div (symCoeff t) a) | t <- ts ]
   in removeSymTerm 0 (SymPuiseuxSeries shifted)
 
--- | Symbolic power expansion f^r
+-- | Symbolic power expansion @f^r@ for rational @r@.
 symExpandPowR :: Expr -> Rational -> String -> Either ExpandError SymPuiseuxSeries
 symExpandPowR f r var = do
   s <- symExpand f var
@@ -334,18 +390,18 @@ symExpandPowR f r var = do
            (shiftSymExponents shift
              (scaleSymSeries (Pow a (Const (fromRational r))) binom))
 
--- | Symbolic binomial series (1+w)^r
+-- | Symbolic binomial series @(1 + w)^r@, truncated to 'depth' terms.
 symBinomialSeries :: Rational -> SymPuiseuxSeries -> SymPuiseuxSeries
 symBinomialSeries r w =
   let bcs   = symBinomCoeffs r depth
-      wpows = take (depth+1) $ iterate (truncateSymSeries depth . mulSymSeries w)
-                                       (SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)])
+      wpows = take (depth+1) $
+                iterate (truncateSymSeries depth . mulSymSeries w)
+                        (SymPuiseuxSeries [SymPuiseuxTerm 0 (Const 1)])
   in truncateSymSeries depth $ foldr addSymSeries zeroSym
-       [ scaleSymSeries c wp
-       | (c, wp) <- zip bcs wpows
-       ]
+       [ scaleSymSeries c wp | (c, wp) <- zip bcs wpows ]
 
--- | Symbolic binomial coefficients as Expr
+-- | Generalised binomial coefficients as 'Expr' values:
+-- @C(r, 0) = 1@, @C(r, k) = r(r−1)···(r−k+1) \/ k!@.
 symBinomCoeffs :: Rational -> Int -> [Expr]
 symBinomCoeffs r n = take (n+1) $ scanl step (Const 1) [0..n-1]
   where

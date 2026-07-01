@@ -1,4 +1,78 @@
-module LimCalc.AlgNum where
+-- | Algebraic number arithmetic over ℂ.
+--
+-- An /algebraic number/ is represented by its minimal polynomial over
+-- ℚ together with an /isolating rectangle/ in ℂ — a small
+-- axis-aligned rectangle in the Gaussian rationals that is guaranteed
+-- to contain exactly one root of the minimal polynomial. This
+-- representation supports exact arithmetic (via resultants) with
+-- approximate root selection (via Durand-Kerner iteration).
+--
+-- = Design overview
+--
+-- Arithmetic (@+@, @*@, @negate@, @recip@) works in three steps:
+--
+-- 1. Compute the minimal polynomial of the result via a resultant
+--    construction ('addResultantQ' or 'mulResultantQ').
+-- 2. Compute an approximate isolating rectangle for the result via
+--    interval arithmetic on the input rectangles ('rectSum', 'rectMul').
+-- 3. Refine to an actual root of the result polynomial using
+--    Durand-Kerner ('refineToRoot').
+--
+-- = Approximation policy
+--
+-- Transcendental functions ('algSin', 'algCos', 'algExp', 'algLog')
+-- are implemented approximately via 'Double' arithmetic, returning a
+-- fresh degree-1 'AlgNum' wrapping the floating-point result. This is
+-- consistent with the series expansion engine, which uses 'AlgNum'
+-- primarily as a coefficient type for its exact rational arithmetic
+-- and only requires transcendental values at specific numeric points.
+--
+-- = Degree cap
+--
+-- Unminimised resultant chains can blow up the minimal polynomial
+-- degree combinatorially. Above 'degreeCapForExactRootFinding',
+-- 'refineToRoot' falls back to 'pinNumerically', pinning the value
+-- as an approximate degree-1 algebraic number. This trades algebraic
+-- exactness for termination.
+module LimCalc.AlgNum
+  ( -- * Types
+    Q
+  , IsoRect (..)
+  , AlgNum (..)
+    -- * Constants
+  , algZero
+  , algOne
+  , algI
+    -- * Constructors
+  , fromQ
+  , algSqrt
+    -- * Arithmetic
+  , algAdd
+  , algNeg
+  , algMul
+  , algInv
+    -- * Transcendental approximations
+  , algSin
+  , algCos
+  , algExp
+  , algLog
+    -- * Conversion
+  , algToDouble
+  , algImagDouble
+    -- * Predicates
+  , isAlgZero
+    -- * Rectangle operations
+  , rectSum
+  , rectMul
+  , rectInv
+  , rectWidth
+  , midPoint
+  , inRect
+    -- * Root finding
+  , refineToRoot
+  , refineRect
+  , durandKerner
+  ) where
 
 import Data.Ratio
 import Data.Complex
@@ -7,33 +81,52 @@ import Data.Ord (comparing)
 import LimCalc.QPoly
 import LimCalc.BivPoly
 
--- | Exact rational number (alias for clarity)
+-- | Exact rational number (alias for clarity).
 type Q = Rational
 
--- | Isolating rectangle in ℂ
+-- | An axis-aligned rectangle in the Gaussian rationals ℚ(i),
+-- used to isolate a single root of a minimal polynomial in ℂ.
+--
+-- The invariant is that the rectangle contains exactly one root
+-- of the associated minimal polynomial. 'lowerLeft' and 'upperRight'
+-- are the two defining corners.
 data IsoRect = IsoRect
   { lowerLeft  :: GaussianQ
+    -- ^ Lower-left corner of the isolating rectangle.
   , upperRight :: GaussianQ
+    -- ^ Upper-right corner of the isolating rectangle.
   } deriving (Eq)
 
 instance Show IsoRect where
   show (IsoRect ll ur) = "[" ++ show ll ++ ", " ++ show ur ++ "]"
 
--- | Check if a GaussianQ is inside an IsoRect
+-- | Test whether a 'GaussianQ' point lies inside an 'IsoRect'.
 inRect :: GaussianQ -> IsoRect -> Bool
 inRect (GQ r i) (IsoRect (GQ r1 i1) (GQ r2 i2)) =
   r1 <= r && r <= r2 && i1 <= i && i <= i2
 
--- | A complex algebraic number
+-- | A complex algebraic number, represented as a minimal polynomial
+-- over ℚ together with an isolating rectangle in ℂ.
+--
+-- The isolating rectangle uniquely identifies which root of the
+-- minimal polynomial this value represents. All arithmetic operations
+-- maintain the invariant that the rectangle contains exactly one root.
 data AlgNum = AlgNum
   { algMinPoly :: QPoly
+    -- ^ Minimal polynomial over ℚ. Stored in ascending-degree order
+    -- (the 'QPoly' convention). Should be monic; this invariant is
+    -- maintained by all arithmetic operations.
   , algIsoRect :: IsoRect
+    -- ^ Isolating rectangle containing exactly one root of 'algMinPoly'.
   }
 
 instance Show AlgNum where
   show (AlgNum p rect) = "AlgNum(" ++ show p ++ ", " ++ show rect ++ ")"
 
--- | Construct an algebraic number from a rational
+-- | Construct an 'AlgNum' from an exact rational.
+--
+-- The minimal polynomial is @x - r@ and the isolating rectangle is
+-- centered at @r@ with a unit margin on each side.
 fromQ :: Rational -> AlgNum
 fromQ r = AlgNum
   { algMinPoly = QPoly [negate r, 1]
@@ -42,26 +135,21 @@ fromQ r = AlgNum
       (GQ (r + 1) 1)
   }
 
--- | The algebraic number 0
+-- | The algebraic number 0.
 algZero :: AlgNum
 algZero = fromQ 0
 
--- | The algebraic number 1
+-- | The algebraic number 1.
 algOne :: AlgNum
 algOne = fromQ 1
 
--- | The imaginary unit i
+-- | The imaginary unit i, satisfying i² = −1.
 --
--- Previously this rectangle was [-1, 1+1i], whose midpoint is
--- 0+0.5i, NOT i -- an asymmetric, miscentered rectangle present
--- since this constant was first written. This was invisible while
--- degree >= 2 AlgNum arithmetic was broken (root selection happened
--- to not depend on algI's own rectangle being accurate), but once
--- rectSum/rectMul's midpoint-based approximate-target estimation
--- started relying on it, it caused i+i to silently pick the wrong
--- root (0 instead of 2i) of an otherwise-correctly-computed
--- resultant. Centered properly here, matching the convention used
--- by fromQ and algSqrt.
+-- The isolating rectangle is centered at @0 + 1i@, matching the
+-- convention used by 'fromQ' and 'algSqrt'. An earlier version used
+-- an asymmetric rectangle (center at @0 + 0.5i@), which caused
+-- @i + i@ to silently select the wrong root of the resultant
+-- polynomial, returning 0 instead of 2i.
 algI :: AlgNum
 algI = AlgNum
   { algMinPoly = QPoly [1, 0, 1]
@@ -70,7 +158,10 @@ algI = AlgNum
       (GQ 1 2)
   }
 
--- | Square root of a positive rational
+-- | Square root of a positive rational, as an 'AlgNum'.
+--
+-- Minimal polynomial: @x² - r@. The isolating rectangle is placed
+-- in the right half-plane, selecting the positive real square root.
 algSqrt :: Rational -> AlgNum
 algSqrt r = AlgNum
   { algMinPoly = QPoly [negate r, 0, 1]
@@ -79,11 +170,15 @@ algSqrt r = AlgNum
       (GQ (r + 1) 1)
   }
 
--- | Evaluate AlgNum's minimal polynomial at a GaussianQ point
+-- | Evaluate the minimal polynomial of an 'AlgNum' at a 'GaussianQ' point.
 algEval :: AlgNum -> GaussianQ -> GaussianQ
 algEval (AlgNum p _) = qEval p
 
--- | Refine isolating rectangle by bisection until width < epsilon
+-- | Refine an isolating rectangle by bisection until its width is
+-- below @eps@.
+--
+-- Only applicable to real algebraic numbers (imaginary part zero);
+-- used internally before Durand-Kerner was introduced.
 refineRect :: AlgNum -> Rational -> AlgNum
 refineRect an@(AlgNum p rect) eps
   | rectWidth rect < eps = an
@@ -94,42 +189,52 @@ refineRect an@(AlgNum p rect) eps
           newRect = if hasRoot p upper then upper else lower
       in refineRect (AlgNum p newRect) eps
 
--- | Width of an isolating rectangle
+-- | Width of an isolating rectangle (real extent).
 rectWidth :: IsoRect -> Rational
 rectWidth (IsoRect (GQ r1 _) (GQ r2 _)) = abs (r2 - r1)
 
--- | Midpoint of an isolating rectangle
+-- | Midpoint of an isolating rectangle as a 'GaussianQ'.
+--
+-- Used as an approximate representative of the algebraic number —
+-- the convention underlying 'algToDouble' and 'algImagDouble'.
 midPoint :: IsoRect -> GaussianQ
 midPoint (IsoRect ll ur) = (ll + ur) / 2
 
--- | Check if a polynomial has a root in a rectangle
+-- | Test whether a polynomial has a root in a rectangle using a
+-- sign-change heuristic on the real axis.
 hasRoot :: QPoly -> IsoRect -> Bool
 hasRoot p rect =
   let ll  = lowerLeft rect
       ur  = upperRight rect
-      -- Check real axis interval [realQ ll, realQ ur]
-      -- Evaluate polynomial at real endpoints
       rLeft  = realQ (qEval p (GQ (realQ ll) 0))
       rRight = realQ (qEval p (GQ (realQ ur) 0))
       rMid   = realQ (qEval p (GQ ((realQ ll + realQ ur) / 2) 0))
   in (rLeft * rMid <= 0) || (rMid * rRight <= 0) || abs rMid < 1e-10
 
--- | Add two algebraic numbers
+-- | Add two algebraic numbers.
+--
+-- Computes the minimal polynomial of @a + b@ via 'addResultantQ',
+-- constructs an approximate rectangle via 'rectSum', then refines
+-- to the correct root with 'refineToRoot'.
 algAdd :: AlgNum -> AlgNum -> AlgNum
 algAdd a b =
   let resPoly = addResultantQ (algMinPoly a) (algMinPoly b)
       rect    = rectSum (algIsoRect a) (algIsoRect b)
   in refineToRoot (AlgNum resPoly rect)
 
--- | Negate an algebraic number
+-- | Negate an algebraic number.
 --
--- Negating coefficients at odd indices gives a polynomial with the
--- correct root, but does NOT preserve monic-ness (e.g. negating
--- algOne's [-1, 1] gives [-1, -1], leading coeff -1, not 1).
--- addResultantQ/mulResultantQ's linear-case shortcuts assume a monic
--- input (root = -c0/1) and silently mis-extract the root otherwise.
--- Rescaling by 1/leadingCoeff after negation keeps the result monic,
--- matching the invariant the rest of the module relies on.
+-- Negation maps the root @α@ of @p(x)@ to the root @−α@ of @p(−x)@,
+-- obtained by negating coefficients at odd indices. The result is
+-- rescaled to be monic, since the arithmetic operations assume monic
+-- minimal polynomials.
+--
+-- The isolating rectangle is negated by reflecting both corners
+-- through the origin (negating both real and imaginary parts and
+-- swapping corners to maintain the lowerLeft\/upperRight ordering).
+-- An earlier version only negated the real part, silently leaving
+-- the imaginary part unchanged and corrupting every subtraction
+-- involving a non-real 'AlgNum'.
 algNeg :: AlgNum -> AlgNum
 algNeg (AlgNum p rect) =
   let negP0 = QPoly [ if even i then c else negate c
@@ -137,60 +242,58 @@ algNeg (AlgNum p rect) =
       negP  = qStrip negP0
       lc    = qLeadingCoeff negP
       monicNegP = if lc == 0 then negP else qScalePoly (1/lc) negP
-      -- Negating a complex rectangle requires negating BOTH the
-      -- real and imaginary extents (and swapping corners so
-      -- lowerLeft/upperRight remain correctly ordered), not just the
-      -- real part. The previous version only negated realQ, leaving
-      -- imagQ untouched -- so negate algI returned a rectangle
-      -- identical to algI's own, silently corrupting every
-      -- computation that negates a non-real AlgNum (e.g. subtraction
-      -- via algAdd a (algNeg b)).
       negRect = IsoRect
         (GQ (negate (realQ (upperRight rect))) (negate (imagQ (upperRight rect))))
         (GQ (negate (realQ (lowerLeft rect)))  (negate (imagQ (lowerLeft rect))))
   in AlgNum monicNegP negRect
 
--- | Multiply two algebraic numbers
+-- | Multiply two algebraic numbers.
+--
+-- Computes the minimal polynomial of @a * b@ via 'mulResultantQ',
+-- constructs an approximate rectangle via 'rectMul', then refines
+-- to the correct root with 'refineToRoot'.
 algMul :: AlgNum -> AlgNum -> AlgNum
 algMul a b =
   let resPoly = mulResultantQ (algMinPoly a) (algMinPoly b)
       rect    = rectMul (algIsoRect a) (algIsoRect b)
   in refineToRoot (AlgNum resPoly rect)
 
--- | Invert an algebraic number
+-- | Invert an algebraic number (@1 \/ a@).
+--
+-- If @α@ satisfies @p(x) = 0@, then @1\/α@ satisfies the polynomial
+-- obtained by reversing the coefficient list of @p@. The result is
+-- rescaled to be monic and the isolating rectangle is inverted via
+-- 'rectInv'.
 algInv :: AlgNum -> AlgNum
 algInv (AlgNum p rect) =
   let cs      = qPolyCoef p
       invP    = qStrip $ QPoly (reverse cs)
-      -- make monic
       lc      = qLeadingCoeff invP
       monicP  = qScalePoly (1/lc) invP
       invRect = rectInv rect
   in refineToRoot (AlgNum monicP invRect)
 
--- | Sum of two isolating rectangles
+-- | Bounding rectangle for the sum of two algebraic numbers.
+--
+-- If @a ∈ R₁@ and @b ∈ R₂@, then @a + b ∈ R₁ + R₂@ (Minkowski sum).
 rectSum :: IsoRect -> IsoRect -> IsoRect
 rectSum (IsoRect ll1 ur1) (IsoRect ll2 ur2) =
   IsoRect (ll1 + ll2) (ur1 + ur2)
 
--- | Product of two isolating rectangles.
+-- | Bounding rectangle for the product of two algebraic numbers.
 --
--- Previously this took a bounding box of the four corner products,
--- which doesn't reliably center on the TRUE product of the two
--- represented values -- complex multiplication doesn't preserve
--- axis-aligned rectangles, so the corner bounding box can be
--- significantly off-center from the actual product (observed: for
--- algI * algI, the corner bounding box centered near 0+0.5i, nowhere
--- near the true product -1, causing refineToRoot's Durand-Kerner
--- root selection to pick the wrong root of x^2-1).
+-- The rectangle is centered at the product of the two midpoints
+-- (which is the best first-order estimate of the true product),
+-- with half-widths determined by the spread of the four corner
+-- products. A minimum half-width of 1\/2 prevents degenerate
+-- zero-width rectangles.
 --
--- The midpoint of each rectangle is itself an approximation of the
--- algebraic number it represents (see algToDouble/algImagDouble's
--- convention), so the product of the two midpoints is the correct
--- first-order estimate of where the true product lands. This is
--- used as the rectangle's center; the corner spread still
--- contributes to sizing the rectangle's width, but no longer
--- determines its center.
+-- An earlier version used the bounding box of all four corner
+-- products as the rectangle itself, without centering on the
+-- midpoint product. For complex multiplication this produced
+-- significantly off-center rectangles, causing 'refineToRoot' to
+-- select the wrong root (observed: @algI * algI@ returning @+1@
+-- instead of @−1@).
 rectMul :: IsoRect -> IsoRect -> IsoRect
 rectMul r1 r2 =
   let mid1 = midPoint r1
@@ -203,15 +306,15 @@ rectMul r1 r2 =
                 ]
       spreadR = (maximum (map realQ corners) - minimum (map realQ corners)) / 2
       spreadI = (maximum (map imagQ corners) - minimum (map imagQ corners)) / 2
-      -- Guard against a degenerate (zero-width) spread, which would
-      -- otherwise produce a zero-width rectangle that excludes the
-      -- center itself due to rounding.
       halfWidth d = max d (1 % 2)
   in IsoRect
        (center - GQ (halfWidth spreadR) (halfWidth spreadI))
        (center + GQ (halfWidth spreadR) (halfWidth spreadI))
 
--- | Inverse of an isolating rectangle
+-- | Bounding rectangle for the reciprocal of an algebraic number.
+--
+-- Computes the reciprocals of all four corners and takes the
+-- bounding box of the results.
 rectInv :: IsoRect -> IsoRect
 rectInv rect =
   let corners = [ lowerLeft rect
@@ -226,42 +329,21 @@ rectInv rect =
       maxI = maximum (map imagQ invCorners)
   in IsoRect (GQ minR minI) (GQ maxR maxI)
 
--- | Refine until rectangle is tight.
+-- | Refine an 'AlgNum' to a specific root of its minimal polynomial.
 --
--- If the minimal polynomial is degree <= 1 after stripping, the
--- "algebraic number" is actually exactly rational: c0 + c1*x = 0
--- has the exact root x = -c0/c1, with zero imaginary part since
--- the coefficients are real rationals. In that case we construct
--- a clean isolating rectangle directly around the exact root,
--- exactly mirroring what 'fromQ' does, instead of running the
--- (real-axis-only) bisection in 'refineRect', which has no business
--- being invoked when there is nothing left to isolate.
+-- Dispatches on the degree of the (stripped) minimal polynomial:
 --
--- For 2 <= degree <= degreeCapForExactRootFinding, we use
--- Durand-Kerner to find all complex roots numerically, then pick
--- whichever root is closest to the rectangle we already have (which
--- came from rectSum/rectMul -- an approximate but reliable estimate
--- of which root we actually want, since algAdd/algMul know roughly
--- where the true sum/product should be).
---
--- Above degreeCapForExactRootFinding: without true minimal
--- polynomial factorization (a substantial separate feature -- this
--- module only strips repeated factors via squarefreeRadical, not
--- irreducible ones), repeated arithmetic can compound minimal
--- polynomial degree combinatorially. Confirmed concretely: starting
--- from algI (degree 2) and chaining just a handful of +/- operations
--- (as Hermite reduction's iterative loop does) produced degree 7
--- minimal polynomials, making Durand-Kerner catastrophically slow
--- and effectively hanging on long arithmetic chains. Pin the value
--- numerically instead -- construct a fresh degree-1 AlgNum directly
--- from the approximate target -- trading exact algebraic structure
--- for termination, consistent with the already-approximate spirit
--- of algSin/algExp/algLog elsewhere in this module.
+-- * Degree 0: degenerate; return as-is.
+-- * Degree 1: the root is exactly @−c₀\/c₁@; construct a clean rectangle.
+-- * Degree 2–'degreeCapForExactRootFinding': use Durand-Kerner to find
+--   all roots, then select the one closest to the rectangle's midpoint.
+-- * Above the cap: fall back to 'pinNumerically' to avoid combinatorial
+--   blowup from long unminimised resultant chains.
 refineToRoot :: AlgNum -> AlgNum
 refineToRoot an@(AlgNum p _) =
   let p' = qStrip p
   in case qDegree p' of
-       0 -> an  -- degenerate: no roots; leave rectangle as-is
+       0 -> an
        1 -> let c0 = qPolyCoef p' !! 0
                 c1 = qPolyCoef p' !! 1
                 root = negate c0 / c1
@@ -273,22 +355,28 @@ refineToRoot an@(AlgNum p _) =
              let approxTarget = complexMidpoint (algIsoRect an)
                  roots        = durandKerner p'
              in case roots of
-                  [] -> an  -- shouldn't happen for degree >= 2; fail safe
+                  [] -> an
                   _  -> let chosen = nearestTo approxTarget roots
                         in AlgNum p' (rectAroundComplex chosen)
 
--- | Degree threshold above which refineToRoot stops attempting exact
--- root-finding and falls back to a numerically-pinned approximation.
--- Chosen generously above what any single arithmetic operation
--- between low-degree AlgNums should need, while still catching the
--- combinatorial-blowup case from long unminimized arithmetic chains.
+-- | Degree threshold above which 'refineToRoot' falls back to
+-- 'pinNumerically' rather than running Durand-Kerner.
+--
+-- Chosen to be comfortably above what a single arithmetic operation
+-- between low-degree 'AlgNum's should produce, while catching the
+-- combinatorial-blowup case from long unminimised resultant chains.
+-- Confirmed necessary: chaining a handful of @+\/-@ operations on
+-- @algI@ (degree 2) produced degree-7 minimal polynomials, making
+-- Durand-Kerner catastrophically slow.
 degreeCapForExactRootFinding :: Int
 degreeCapForExactRootFinding = 6
 
--- | Construct a fresh AlgNum directly from an approximate complex
--- target, as a degree-1 ("exact" in form, approximate in value)
--- minimal polynomial. Used when refineToRoot's degree cap is
--- exceeded; see its header for why.
+-- | Pin an algebraic number numerically as an approximate degree-1
+-- 'AlgNum' constructed directly from a 'Complex Double' target.
+--
+-- Used by 'refineToRoot' when the degree cap is exceeded. Trades
+-- algebraic exactness for termination, consistent with the
+-- already-approximate transcendental functions in this module.
 pinNumerically :: Complex Double -> AlgNum
 pinNumerically z =
   let re = toRational (realPart z)
@@ -297,8 +385,8 @@ pinNumerically z =
        then fromQ re
        else fromQ re + fromQ im * algI
 
--- | Construct a clean isolating rectangle around an exact rational
--- root, matching the convention used by 'fromQ'.
+-- | Construct a clean isolating rectangle around an exact rational root,
+-- matching the convention used by 'fromQ'.
 exactRect :: Rational -> IsoRect
 exactRect root = IsoRect
   (GQ (root - 1) (negate 1))
@@ -308,10 +396,11 @@ exactRect root = IsoRect
 -- Complex root-finding (Durand-Kerner / Weierstrass iteration)
 ------------------------------------------------------------------------
 
--- | Find all complex roots of a QPoly via Durand-Kerner iteration.
--- Converts the (exact, rational) coefficients to Complex Double for
--- the iteration, since Durand-Kerner is inherently numerical. Returns
--- an empty list only for degenerate input (degree < 1).
+-- | Find all complex roots of a 'QPoly' via Durand-Kerner iteration.
+--
+-- Converts the exact rational coefficients to 'Complex Double' for
+-- the iteration. Returns an empty list for degenerate input
+-- (degree < 1).
 durandKerner :: QPoly -> [Complex Double]
 durandKerner p
   | n < 1     = []
@@ -319,7 +408,6 @@ durandKerner p
   where
     n  = qDegree p
     cs = map fromRational (qPolyCoef p) :: [Double]
-       -- ascending degree, same convention as QPoly itself
 
 -- | Hard cap on Durand-Kerner iterations, guarding against
 -- pathological non-convergence (e.g. very closely clustered or
@@ -332,10 +420,11 @@ durandKernerMaxIters = 200
 durandKernerTol :: Double
 durandKernerTol = 1e-12
 
--- | Initial guesses spread around a circle in the complex plane,
--- the standard starting point for Durand-Kerner. Using a radius
--- slightly off 1 and irrational-ish angle offsets helps avoid
--- symmetric polynomials producing degenerate initial configurations.
+-- | Initial guesses spread around a circle in the complex plane.
+--
+-- Using a radius slightly off 1 and irrational-ish angle offsets
+-- helps avoid degenerate initial configurations for symmetric
+-- polynomials.
 initialGuesses :: Int -> [Complex Double]
 initialGuesses n =
   [ mkPolar 1.13 (2 * pi * fromIntegral k / fromIntegral n + 0.3)
@@ -347,16 +436,17 @@ initialGuesses n =
 evalComplexPoly :: [Double] -> Complex Double -> Complex Double
 evalComplexPoly cs z = foldr (\c acc -> (c :+ 0) + z * acc) (0 :+ 0) cs
 
--- | One Durand-Kerner iteration step for all roots simultaneously.
+-- | One Durand-Kerner iteration step.
 --
--- The correct update is z_i <- z_i - p(z_i) / (a_n * prod_{j/=i} (z_i - z_j)),
--- where a_n is p's LEADING coefficient. Previously this divided only
--- by the product of differences, omitting a_n entirely -- correct
--- only for monic polynomials. The resultant polynomials this is
--- actually called on (from addResultantBiv/mulResultantBiv) are not
--- normalized to be monic, so omitting a_n caused the iteration to
--- diverge (observed: roots drifting to magnitude ~10^44 instead of
--- converging) rather than merely being off by a constant factor.
+-- Updates each root @z_i@ by:
+--
+-- @z_i ← z_i − p(z_i) \/ (aₙ · ∏_{j≠i} (z_i − z_j))@
+--
+-- where @aₙ@ is the leading coefficient of @p@. Dividing by @aₙ@
+-- is required for non-monic polynomials; an earlier version omitted
+-- it, causing divergence (roots drifting to magnitude ~10⁴⁴) on the
+-- non-monic resultant polynomials produced by 'addResultantQ' and
+-- 'mulResultantQ'.
 dkStep :: [Double] -> [Complex Double] -> [Complex Double]
 dkStep cs zs =
   [ z - evalComplexPoly cs z / (leading * denom z (filter (/= z) zs'))
@@ -366,8 +456,7 @@ dkStep cs zs =
     leading = (last cs) :+ 0
     denom z others = product [ z - w | w <- others ]
 
--- | Iterate Durand-Kerner until convergence or the iteration cap is
--- hit, whichever comes first.
+-- | Iterate Durand-Kerner until convergence or the iteration cap is hit.
 iterateDK :: [Double] -> [Complex Double] -> Int -> [Complex Double]
 iterateDK _  zs 0 = zs
 iterateDK cs zs n =
@@ -377,44 +466,40 @@ iterateDK cs zs n =
        then zs'
        else iterateDK cs zs' (n - 1)
 
--- | Midpoint of an isolating rectangle as a Complex Double, used to
--- pick the "intended" root out of all roots Durand-Kerner finds.
+-- | Midpoint of an isolating rectangle as a 'Complex Double'.
+--
+-- Used by 'refineToRoot' to identify which Durand-Kerner root is
+-- the intended one.
 complexMidpoint :: IsoRect -> Complex Double
 complexMidpoint rect =
   let GQ r i = midPoint rect
   in fromRational r :+ fromRational i
 
--- | Pick whichever candidate root is closest to a target point.
+-- | Select the element of a list closest to a target point.
 nearestTo :: Complex Double -> [Complex Double] -> Complex Double
 nearestTo target = minimumBy (comparing (magnitude . subtract target))
 
--- | Build a fresh isolating rectangle around an approximate complex
--- root found numerically. Since Durand-Kerner gives only a Double
--- approximation (not an exact algebraic isolating interval), this
--- rectangle is sized to comfortably contain the true root assuming
--- the numerical approximation is accurate to its converged
--- tolerance, with margin for safety. This is consistent in spirit
--- with the rest of the module's already-approximate transcendental
--- functions (algSin, algExp, etc., which are likewise Double-based).
+-- | Build an isolating rectangle around an approximate complex root
+-- found numerically.
+--
+-- Sized with a margin of @1\/1000000@ on each side — generous
+-- relative to 'durandKernerTol' — to ensure the true root lies
+-- comfortably inside.
 rectAroundComplex :: Complex Double -> IsoRect
 rectAroundComplex z =
   let re = toRational (realPart z)
       im = toRational (imagPart z)
-      margin = 1 % 1000000  -- generous relative to durandKernerTol
+      margin = 1 % 1000000
   in IsoRect
        (GQ (re - margin) (im - margin))
        (GQ (re + margin) (im + margin))
 
--- | Num instance for AlgNum
+-- | 'Num' instance for 'AlgNum'.
 --
--- abs was previously defined as identity (abs an = an), which is
--- wrong: 'abs' must return the magnitude, not the value itself.
--- This silently broke every stripZeros/leadingTermNZ/isAlgZero-style
--- comparison for negative coefficients, since comparing 'abs x > eps'
--- via the Ord instance (which compares algToDouble values) would
--- compare the *signed* double against eps -- so any negative
--- coefficient with magnitude bigger than eps was incorrectly treated
--- as smaller than eps and stripped as if it were zero.
+-- 'abs' returns the magnitude (negating if the real part is negative),
+-- not the value itself. An earlier version defined @abs an = an@,
+-- which caused every coefficient magnitude check in 'stripZeros' and
+-- 'leadingTermNZ' to silently pass for negative coefficients.
 instance Num AlgNum where
   (+)         = algAdd
   (*)         = algMul
@@ -423,51 +508,61 @@ instance Num AlgNum where
   signum _    = algOne
   fromInteger = fromQ . fromInteger
 
--- | Fractional instance for AlgNum
+-- | 'Fractional' instance for 'AlgNum'.
 instance Fractional AlgNum where
   recip        = algInv
   fromRational = fromQ
 
--- | Approximate transcendental functions at AlgNum
--- These return approximate AlgNum values using Double arithmetic
+-- | Approximate transcendental functions via 'Double' arithmetic.
+--
+-- Each function evaluates its argument approximately via 'algToDouble',
+-- applies the standard 'Double' function, and wraps the result back
+-- as a degree-1 'AlgNum' via 'fromQ'. This is consistent with the
+-- series expansion engine's use of 'AlgNum' as a coefficient type:
+-- exact algebraic structure is maintained for rational arithmetic,
+-- while transcendental values are approximated.
 algSin :: AlgNum -> AlgNum
 algSin a = fromRational (toRational (sin (algToDouble a)))
 
+-- | Approximate cosine. See 'algSin'.
 algCos :: AlgNum -> AlgNum
 algCos a = fromRational (toRational (cos (algToDouble a)))
 
+-- | Approximate exponential. See 'algSin'.
 algExp :: AlgNum -> AlgNum
 algExp a = fromRational (toRational (exp (algToDouble a)))
 
+-- | Approximate natural logarithm. See 'algSin'.
 algLog :: AlgNum -> AlgNum
 algLog a = fromRational (toRational (log (algToDouble a)))
 
--- | Convert AlgNum to approximate Double
--- Uses midpoint of isolating rectangle
+-- | Approximate real part of an 'AlgNum' as a 'Double'.
+--
+-- Returns the real part of the midpoint of the isolating rectangle.
 algToDouble :: AlgNum -> Double
 algToDouble (AlgNum _ rect) =
   let mid = midPoint rect
   in fromRational (realQ mid)
 
--- | Approximate imaginary part of an AlgNum, as a Double.
--- Mirrors algToDouble's convention (midpoint of isolating rectangle)
--- but projects the imaginary component instead of the real one.
--- Needed to detect non-real leading coefficients, e.g. when deciding
--- whether Abs has a sensible real-valued local expansion.
+-- | Approximate imaginary part of an 'AlgNum' as a 'Double'.
+--
+-- Returns the imaginary part of the midpoint of the isolating
+-- rectangle. Used to detect non-real leading coefficients, e.g. in
+-- 'LimCalc.Expand.expand' for 'LimCalc.Expr.Abs'.
 algImagDouble :: AlgNum -> Double
 algImagDouble (AlgNum _ rect) =
   let mid = midPoint rect
   in fromRational (imagQ mid)
 
--- | Ord instance (approximate via Double)
+-- | 'Ord' instance for 'AlgNum' (approximate, via 'algToDouble').
 instance Ord AlgNum where
   compare a b = compare (algToDouble a) (algToDouble b)
 
--- | Real instance (approximate via Double)
+-- | 'Real' instance for 'AlgNum' (approximate, via 'algToDouble').
 instance Real AlgNum where
   toRational = toRational . algToDouble
 
--- | RealFrac instance (approximate)
+-- | 'RealFrac' instance for 'AlgNum' (approximate).
 instance RealFrac AlgNum where
   properFraction a =
     let d = algToDouble a
@@ -478,7 +573,7 @@ instance RealFrac AlgNum where
   ceiling  = ceiling  . algToDouble
   floor    = floor    . algToDouble
 
--- | Floating instance (approximate via Double)
+-- | 'Floating' instance for 'AlgNum' (approximate via 'Double').
 instance Floating AlgNum where
   pi      = fromQ (toRational (pi :: Double))
   exp     = algExp
@@ -496,21 +591,15 @@ instance Floating AlgNum where
   acosh a = fromQ (toRational (acosh (algToDouble a)))
   atanh a = fromQ (toRational (atanh (algToDouble a)))
 
--- | Check if AlgNum is zero
+-- | Test whether an 'AlgNum' is zero (within numerical tolerance).
 --
--- Compares BOTH real and imaginary parts. This MUST check both: a
--- version checking only algToDouble (the real part) was previously
--- fixed and tested in this session but was lost before being
--- committed, which silently broke every zero-check throughout the
--- codebase the moment a purely-imaginary nonzero value appeared
--- (e.g. 1/(2i) = -0.5i, whose real part is ~0). Concretely, this
--- caused monomialPoly's c==0 guard to treat such a value as zero,
--- producing an empty polynomial where a nonzero one was needed,
--- which in turn made divModPoly's degree-reduction step a no-op and
--- looped forever (used by gcdPoly, used by ratFun's automatic
--- reduction, triggered by trig integration's t=exp(ix) substitution).
+-- Checks both real and imaginary parts via 'algToDouble' and
+-- 'algImagDouble'. Checking only the real part would incorrectly
+-- treat purely imaginary non-zero values (e.g. @1\/(2i) = −0.5i@)
+-- as zero, corrupting downstream polynomial arithmetic.
 isAlgZero :: AlgNum -> Bool
 isAlgZero a = abs (algToDouble a) < 1e-12 && abs (algImagDouble a) < 1e-12
 
+-- | 'Eq' instance for 'AlgNum': equality up to numerical tolerance.
 instance Eq AlgNum where
   a == b = isAlgZero (a - b)
