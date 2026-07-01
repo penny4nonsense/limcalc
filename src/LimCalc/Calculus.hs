@@ -1,9 +1,8 @@
 module LimCalc.Calculus where
-
 import LimCalc.Expr
 import LimCalc.Puiseux
 import LimCalc.Types
-import LimCalc.Expand
+import LimCalc.Expand hiding (factorial)
 import LimCalc.AlgNum
 import LimCalc.SymExpand
 import LimCalc.SymPuiseux
@@ -19,12 +18,12 @@ derivative f pointD var =
        Left err     -> Left err
        Right series -> Right $ algToDouble (coeffAt 1 series)
 
--- | Extract the coefficient of h^n from a series
-coeffAt :: Rational -> PuiseuxSeries AlgNum -> AlgNum
-coeffAt n (PuiseuxSeries ts) =
-  case filter (\t -> pExp t == n) ts of
+-- | Extract the coefficient of h^n * log(h)^0 from a log-Puiseux series
+coeffAt :: Rational -> LogPuiseuxSeries AlgNum -> AlgNum
+coeffAt n (LogPuiseuxSeries ts) =
+  case filter (\t -> lpExp t == n && lpLog t == 0) ts of
     []    -> algZero
-    (t:_) -> coeff t
+    (t:_) -> lpCoeff t
 
 -- | nth derivative
 nthDerivative :: Int -> Expr -> Map.Map String Double -> String -> Either ExpandError Double
@@ -52,34 +51,19 @@ diff f var = do
 
 -- | Symbolic partial derivative of f with respect to var, treating
 -- all other variables as constants.
---
--- Uses DiffField.deriveExpr directly (the algebraic chain-rule
--- approach) rather than symExpand. This correctly handles iterated
--- partial derivatives (e.g. d^2f/dx^2 = d/dx(df/dx)) because
--- deriveExpr never introduces spurious division or expansion
--- artifacts -- it treats every Var other than var as a constant and
--- applies the usual algebraic rules. The series-expansion approach
--- (symExpand) was incorrect for iterated partials because expanding
--- the already-differentiated result around x again introduced x0
--- terms that polluted the coefficient extraction.
 partialDiff :: Expr -> String -> Either ExpandError Expr
 partialDiff f var =
   Right $ simplify $ deriveExpr (baseField var) f
 
--- | Gradient of a scalar-valued expression with respect to a list of
--- variables. Returns [df/dx1, df/dx2, ..., df/dxn].
+-- | Gradient of a scalar-valued expression with respect to a list of variables.
 gradient :: Expr -> [String] -> Either ExpandError [Expr]
 gradient f vars = mapM (partialDiff f) vars
 
--- | Jacobian matrix of a vector-valued function with respect to a
--- list of variables. Entry (i,j) = dfi/dxj.
--- Returns a list of rows, each row being the gradient of one fi.
+-- | Jacobian matrix of a vector-valued function with respect to a list of variables.
 jacobian :: [Expr] -> [String] -> Either ExpandError [[Expr]]
 jacobian fs vars = mapM (\f -> gradient f vars) fs
 
 -- | Hessian matrix of a scalar-valued expression.
--- Entry (i,j) = d^2f/(dxi dxj). Symmetric by Clairaut's theorem
--- (for smooth f), so H[i][j] = H[j][i].
 hessian :: Expr -> [String] -> Either ExpandError [[Expr]]
 hessian f vars = do
   grad <- gradient f vars

@@ -23,4 +23,4 @@ data ExpandError
   deriving (Show, Eq)
 
 -- | Result of expansion
-type ExpandResult = Either ExpandError (PuiseuxSeries AlgNum)
+type ExpandResult = Either ExpandError (LogPuiseuxSeries AlgNum)

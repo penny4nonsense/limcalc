@@ -17,8 +17,8 @@ limit f var x0 =
          case leadingTermNZ (stripZeros series) of
            Nothing -> Exists 0
            Just lt ->
-             if pExp lt < 0
-               then Pole (pExp lt)
+               if lpExp lt < 0
+               then Pole (lpExp lt)
                else Exists (algToDouble (constantTerm series))
 
 -- | Result of a limit computation

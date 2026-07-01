@@ -22,6 +22,7 @@ import Data.List (sort)
 import LimCalc.QPoly
 import LimCalc.BivPoly
 import LimCalc.MultivariateLimit
+import LimCalc.Pretty
 
 main :: IO ()
 main = defaultMain tests
@@ -46,17 +47,15 @@ tests = testGroup "limcalc"
   , simplifyFoldTests
   , partialFractionsTests
   , algebraicRischTests
+  , prettyTests
   ]
 
--- | Helper: expand at a point
 pt :: Double -> Map.Map String AlgNum
 pt x = Map.fromList [("x", fromQ (toRational x))]
 
--- | Helper: AlgNum from Double
 aN :: Double -> AlgNum
 aN = fromQ . toRational
 
--- | Helper: get Right value
 unRight :: Either a b -> b
 unRight (Right x) = x
 unRight (Left _)  = error "Expected Right"
@@ -68,31 +67,31 @@ unRight (Left _)  = error "Expected Right"
 seriesTests :: TestTree
 seriesTests = testGroup "PuiseuxSeries arithmetic"
   [ testCase "addSeries combines like terms" $
-      let s1 = PuiseuxSeries [PuiseuxTerm 1 (aN 2), PuiseuxTerm 2 (aN 3)]
-          s2 = PuiseuxSeries [PuiseuxTerm 1 (aN 4), PuiseuxTerm 3 (aN 1)]
+      let s1 = LogPuiseuxSeries [pureTerm 1 (aN 2), pureTerm 2 (aN 3)]
+          s2 = LogPuiseuxSeries [pureTerm 1 (aN 4), pureTerm 3 (aN 1)]
           r  = addSeries s1 s2
-      in terms r @?= [ PuiseuxTerm 1 (aN 6)
-                     , PuiseuxTerm 2 (aN 3)
-                     , PuiseuxTerm 3 (aN 1) ]
+      in lterms r @?= [ LogPuiseuxTerm (aN 6) 1 0
+                      , LogPuiseuxTerm (aN 3) 2 0
+                      , LogPuiseuxTerm (aN 1) 3 0 ]
 
   , testCase "addSeries cancels zero terms" $
-      let s1 = PuiseuxSeries [PuiseuxTerm 1 (aN 1)]
-          s2 = PuiseuxSeries [PuiseuxTerm 1 (aN (-1))]
-      in terms (addSeries s1 s2) @?= []
+      let s1 = LogPuiseuxSeries [pureTerm 1 (aN 1)]
+          s2 = LogPuiseuxSeries [pureTerm 1 (aN (-1))]
+      in lterms (addSeries s1 s2) @?= []
 
   , testCase "mulSeries Cauchy product" $
-      let s1 = PuiseuxSeries [PuiseuxTerm 0 (aN 1), PuiseuxTerm 1 (aN 1)]
-          s2 = PuiseuxSeries [PuiseuxTerm 0 (aN 1), PuiseuxTerm 1 (aN 1)]
+      let s1 = LogPuiseuxSeries [pureTerm 0 (aN 1), pureTerm 1 (aN 1)]
+          s2 = LogPuiseuxSeries [pureTerm 0 (aN 1), pureTerm 1 (aN 1)]
           r  = mulSeries s1 s2
-      in terms r @?= [ PuiseuxTerm 0 (aN 1)
-                     , PuiseuxTerm 1 (aN 2)
-                     , PuiseuxTerm 2 (aN 1) ]
+      in lterms r @?= [ LogPuiseuxTerm (aN 1) 0 0
+                      , LogPuiseuxTerm (aN 2) 1 0
+                      , LogPuiseuxTerm (aN 1) 2 0 ]
 
   , testCase "mulSeries with fractional exponents" $
-      let s1 = PuiseuxSeries [PuiseuxTerm (1/2) (aN 1)]
-          s2 = PuiseuxSeries [PuiseuxTerm (1/2) (aN 1)]
+      let s1 = LogPuiseuxSeries [pureTerm (1/2) (aN 1)]
+          s2 = LogPuiseuxSeries [pureTerm (1/2) (aN 1)]
           r  = mulSeries s1 s2
-      in terms r @?= [PuiseuxTerm 1 (aN 1)]
+      in lterms r @?= [LogPuiseuxTerm (aN 1) 1 0]
   ]
 
 ------------------------------------------------------------------------
@@ -103,20 +102,20 @@ expandTests :: TestTree
 expandTests = testGroup "Expansion engine"
   [ testCase "expand Const" $
       expand (Const 3.0) (pt 0) "x"
-        @?= Right (PuiseuxSeries [PuiseuxTerm 0 (aN 3)])
+        @?= Right (LogPuiseuxSeries [pureTerm 0 (aN 3)])
 
   , testCase "expand Var at x0=0" $
       expand (Var "x") (pt 0) "x"
-        @?= Right (PuiseuxSeries [PuiseuxTerm 1 (aN 1)])
+        @?= Right (LogPuiseuxSeries [pureTerm 1 (aN 1)])
 
   , testCase "expand Var at x0=2" $
       expand (Var "x") (pt 2) "x"
-        @?= Right (PuiseuxSeries [PuiseuxTerm 0 (aN 2), PuiseuxTerm 1 (aN 1)])
+        @?= Right (LogPuiseuxSeries [pureTerm 0 (aN 2), pureTerm 1 (aN 1)])
 
   , testCase "expand sin(x) at x0=0 leading term" $
       let Right s = expand (Sin (Var "x")) (pt 0) "x"
           Just lt = leadingTermNZ s
-      in pExp lt @?= 1
+      in lpExp lt @?= 1
 
   , testCase "expand sin(x) at x0=pi/2 constant term" $
       let Right s = expand (Sin (Var "x")) (pt (pi/2)) "x"
@@ -129,22 +128,25 @@ expandTests = testGroup "Expansion engine"
   , testCase "expand 1/x at x0=0 is pole" $
       let Right s = expand (Div (Const 1) (Var "x")) (pt 0) "x"
           Just lt = leadingTermNZ s
-      in pExp lt @?= (-1)
+      in lpExp lt @?= (-1)
 
   , testCase "expand sin^(1/2)(x) at x0=0 leading exponent" $
       let Right s = expand (Pow (Sin (Var "x")) (Const 0.5)) (pt 0) "x"
           Just lt = leadingTermNZ s
-      in pExp lt @?= (1/2)
+      in lpExp lt @?= (1/2)
 
   , testCase "expand sin^(1/2)(x) at x0=0 leading coeff" $
       let Right s = expand (Pow (Sin (Var "x")) (Const 0.5)) (pt 0) "x"
           Just lt = leadingTermNZ s
-      in abs (algToDouble (coeff lt) - 1.0) < 1e-10 @?= True
+      in abs (algToDouble (lpCoeff lt) - 1.0) < 1e-10 @?= True
 
-  , testCase "expand log(x) at x0<=0 returns error" $
+  , testCase "expand log(x) at x0=0 has log(h) term" $
       case expand (Log (Var "x")) (pt 0) "x" of
-        Left (Undefined _) -> return ()
-        _                  -> assertFailure "Expected Undefined error"
+        Right s ->
+          case filter (\t -> lpLog t == 1) (lterms s) of
+            (t:_) -> lpExp t @?= 0
+            []    -> assertFailure "Expected log(h) term"
+        Left e  -> assertFailure $ "Expected Right, got: " ++ show e
 
   , testCase "expand unknown variable returns error" $
       case expand (Var "y") (pt 0) "x" of
@@ -452,28 +454,22 @@ rischTests = testGroup "Risch integration"
         NonElementary -> return ()
         other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
 
-  , testCase "int log(x) dx = x*log(x) - x (regression: required \
-             \simplifying the by-parts inner expression before \
-             \reclassifying it)" $
+  , testCase "int log(x) dx = x*log(x) - x" $
       rischIntegrate (Log (Var "x")) "x"
         @?= Elementary (Sub (Mul (Var "x") (Log (Var "x"))) (Var "x"))
 
-  , testCase "int x*log(x) dx = x^2/2*log(x) - x^2/4 (regression: \
-             \LogCase previously discarded the multiplier x entirely, \
-             \silently treating this the same as plain log(x))" $
+  , testCase "int x*log(x) dx = x^2/2*log(x) - x^2/4" $
       rischIntegrate (Mul (Var "x") (Log (Var "x"))) "x"
         @?= Elementary
               (Sub (Mul (Const 0.5) (Mul (Pow (Var "x") (Const 2.0)) (Log (Var "x"))))
                    (Mul (Const 0.25) (Pow (Var "x") (Const 2.0))))
 
-  , testCase "int 2x/(x^2-1) dx = log(x^2-1) (regression: log-derivative \
-             \edge case in Rothstein-Trager produced garbage when a = c*d')" $
+  , testCase "int 2x/(x^2-1) dx = log(x^2-1)" $
       rischIntegrate (Div (Mul (Const 2) (Var "x"))
                          (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x"
         @?= Elementary (Log (Add (Const (-1.0)) (Pow (Var "x") (Const 2.0))))
 
-  , testCase "int 1/(x^2-1) dx has two log terms (partial fractions via \
-             \Rothstein-Trager)" $
+  , testCase "int 1/(x^2-1) dx has two log terms" $
       case rischIntegrate (Div (Const 1)
                               (Sub (Pow (Var "x") (Const 2)) (Const 1))) "x" of
         Elementary _ -> return ()
@@ -500,11 +496,9 @@ rischTests = testGroup "Risch integration"
   ]
 
 ------------------------------------------------------------------------
--- Degree >= 2 AlgNum arithmetic (complex algebraic numbers)
+-- AlgNum degree >= 2
 ------------------------------------------------------------------------
 
--- | Helper: assert an AlgNum's real and imaginary parts match
--- expected values within tolerance.
 algNumApprox :: AlgNum -> Double -> Double -> Assertion
 algNumApprox a expectedRe expectedIm = do
   abs (algToDouble a - expectedRe) < 1e-6 @?
@@ -537,28 +531,25 @@ algNumDegree2Tests = testGroup "AlgNum degree >= 2 (complex algebraic numbers)"
   , testCase "negate i = -i" $
       algNumApprox (negate algI) 0 (-1)
 
-  , testCase "1 - i has imaginary part -1 (regression: algNeg previously left imagQ untouched)" $
+  , testCase "1 - i has imaginary part -1" $
       algNumApprox (algOne - algI) 1 (-1)
   ]
 
 ------------------------------------------------------------------------
--- QPoly division (regression: qDivPoly stub silently no-op'd on
--- non-constant input, corrupting the subresultant PRS recursion)
+-- QPoly division
 ------------------------------------------------------------------------
 
 qPolyDivisionTests :: TestTree
 qPolyDivisionTests = testGroup "QPoly division"
   [ testCase "qDivModPoly exact division, no remainder" $
-      -- (x^2 - 1) / (x - 1) = x + 1, remainder 0
-      let p = QPoly [-1, 0, 1]   -- x^2 - 1
-          q = QPoly [-1, 1]      -- x - 1
+      let p = QPoly [-1, 0, 1]
+          q = QPoly [-1, 1]
           (quot, rem') = qDivModPoly p q
       in (qPolyCoef quot, qPolyCoef (qStrip rem')) @?= ([1, 1], [])
 
   , testCase "qDivModPoly with nonzero remainder" $
-      -- (x^2 + 1) / (x - 1) = x + 1, remainder 2
-      let p = QPoly [1, 0, 1]    -- x^2 + 1
-          q = QPoly [-1, 1]      -- x - 1
+      let p = QPoly [1, 0, 1]
+          q = QPoly [-1, 1]
           (quot, rem') = qDivModPoly p q
       in (qPolyCoef quot, qPolyCoef (qStrip rem')) @?= ([1, 1], [2])
 
@@ -569,14 +560,9 @@ qPolyDivisionTests = testGroup "QPoly division"
   ]
 
 ------------------------------------------------------------------------
--- Trig integration via the exponential extension (e^(ix))
+-- Trig integration
 ------------------------------------------------------------------------
 
--- | Evaluate an Expr at a point, in Complex Double, since
--- rischIntegrate's trig output legitimately contains I and only
--- cancels to a real value at the end. Var lookups use the single
--- supplied (name, value) binding; Const/Pi/E/I are independent of
--- the binding.
 evalComplexExpr :: (String, Complex Double) -> Expr -> Complex Double
 evalComplexExpr _        (Const c) = c :+ 0
 evalComplexExpr _        Pi        = pi :+ 0
@@ -585,23 +571,21 @@ evalComplexExpr _        I         = 0 :+ 1
 evalComplexExpr (vn, vv) (Var x)
   | x == vn   = vv
   | otherwise = error ("evalComplexExpr: unbound variable " ++ x)
-evalComplexExpr env (Add f g) = evalComplexExpr env f + evalComplexExpr env g
-evalComplexExpr env (Sub f g) = evalComplexExpr env f - evalComplexExpr env g
-evalComplexExpr env (Mul f g) = evalComplexExpr env f * evalComplexExpr env g
-evalComplexExpr env (Div f g) = evalComplexExpr env f / evalComplexExpr env g
-evalComplexExpr env (Neg f)   = negate (evalComplexExpr env f)
-evalComplexExpr env (Abs f)   = magnitude (evalComplexExpr env f) :+ 0
-evalComplexExpr env (Exp f)   = exp (evalComplexExpr env f)
-evalComplexExpr env (Log f)   = log (evalComplexExpr env f)
-evalComplexExpr env (Sin f)   = sin (evalComplexExpr env f)
-evalComplexExpr env (Cos f)   = cos (evalComplexExpr env f)
-evalComplexExpr env (Arcsin f) = asin (evalComplexExpr env f)
-evalComplexExpr env (Arccos f) = acos (evalComplexExpr env f)
-evalComplexExpr env (Arctan f) = atan (evalComplexExpr env f)
-evalComplexExpr env (Pow f g) = evalComplexExpr env f ** evalComplexExpr env g
+evalComplexExpr env (Add f g)   = evalComplexExpr env f + evalComplexExpr env g
+evalComplexExpr env (Sub f g)   = evalComplexExpr env f - evalComplexExpr env g
+evalComplexExpr env (Mul f g)   = evalComplexExpr env f * evalComplexExpr env g
+evalComplexExpr env (Div f g)   = evalComplexExpr env f / evalComplexExpr env g
+evalComplexExpr env (Neg f)     = negate (evalComplexExpr env f)
+evalComplexExpr env (Abs f)     = magnitude (evalComplexExpr env f) :+ 0
+evalComplexExpr env (Exp f)     = exp (evalComplexExpr env f)
+evalComplexExpr env (Log f)     = log (evalComplexExpr env f)
+evalComplexExpr env (Sin f)     = sin (evalComplexExpr env f)
+evalComplexExpr env (Cos f)     = cos (evalComplexExpr env f)
+evalComplexExpr env (Arcsin f)  = asin (evalComplexExpr env f)
+evalComplexExpr env (Arccos f)  = acos (evalComplexExpr env f)
+evalComplexExpr env (Arctan f)  = atan (evalComplexExpr env f)
+evalComplexExpr env (Pow f g)   = evalComplexExpr env f ** evalComplexExpr env g
 
--- | Assert that two complex values agree (within tolerance) on real
--- and imaginary parts.
 complexApprox :: Complex Double -> Complex Double -> Assertion
 complexApprox got expected = do
   abs (realPart got - realPart expected) < 1e-6 @?
@@ -609,8 +593,6 @@ complexApprox got expected = do
   abs (imagPart got - imagPart expected) < 1e-6 @?
     ("imag part: expected " ++ show (imagPart expected) ++ ", got " ++ show (imagPart got))
 
--- | Extract the Expr from an Elementary RischResult, failing the
--- test otherwise.
 expectElementary :: RischResult -> Expr
 expectElementary (Elementary e) = e
 expectElementary other = error ("expected Elementary, got: " ++ show other)
@@ -629,27 +611,26 @@ trigIntegrationTests = testGroup "Trig integration via exponential extension"
           expect = sin (0.7 :+ 0)
       in complexApprox got expect
 
-  , testCase "int sin(x) dx matches -cos(x) at x=2.3 (different point)" $
+  , testCase "int sin(x) dx matches -cos(x) at x=2.3" $
       let result = expectElementary (rischIntegrate (Sin (Var "x")) "x")
           got    = evalComplexExpr ("x", 2.3 :+ 0) result
           expect = negate (cos (2.3 :+ 0))
       in complexApprox got expect
 
-  , testCase "int cos(x) dx matches sin(x) at x=2.3 (different point)" $
+  , testCase "int cos(x) dx matches sin(x) at x=2.3" $
       let result = expectElementary (rischIntegrate (Cos (Var "x")) "x")
           got    = evalComplexExpr ("x", 2.3 :+ 0) result
           expect = sin (2.3 :+ 0)
       in complexApprox got expect
 
-  , testCase "int 1/(x^2+1) dx is non-elementary over the reals (regression: \
-             \complex root-finding previously misclassified this as Elementary)" $
+  , testCase "int 1/(x^2+1) dx is non-elementary over the reals" $
       case rischIntegrate (Div (Const 1) (Add (Pow (Var "x") (Const 2)) (Const 1))) "x" of
         NonElementary -> return ()
         other         -> assertFailure $ "Expected NonElementary, got: " ++ show other
   ]
 
 ------------------------------------------------------------------------
--- Special function recognition (erf, li, Si, Ci, Ei)
+-- Special function recognition
 ------------------------------------------------------------------------
 
 specialFunctionTests :: TestTree
@@ -658,9 +639,7 @@ specialFunctionTests = testGroup "Special function recognition"
       rischIntegrate (Exp (Neg (Pow (Var "x") (Const 2)))) "x"
         @?= Elementary (Mul (Div (Pow Pi (Const 0.5)) (Const 2.0)) (Erf (Var "x")))
 
-  , testCase "int e^(x^2) dx is still NonElementary (negative control: \
-             \confirms the erf pattern match doesn't over-fire on the \
-             \positive-exponent case, which has no classical closed form)" $
+  , testCase "int e^(x^2) dx is still NonElementary" $
       rischIntegrate (Exp (Pow (Var "x") (Const 2))) "x"
         @?= NonElementary
 
@@ -680,9 +659,7 @@ specialFunctionTests = testGroup "Special function recognition"
       rischIntegrate (Div (Exp (Var "x")) (Var "x")) "x"
         @?= Elementary (Ei (Var "x"))
 
-  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase; \
-             \Erf/Si/Ei/Ci also work via diff/symExpand \
-             \(Li requires doubly-logarithmic Puiseux -- left Unknown)" $ do
+  , testCase "Erf/Li/Si/Ci/Ei have correct derivatives via deriveBase" $ do
       simplify (deriveBase (Erf (Var "x")))
         @?= simplify (Mul (Div (Const 2.0) (Pow Pi (Const 0.5))) (Exp (Neg (Mul (Var "x") (Var "x")))))
       simplify (deriveBase (Li (Var "x")))
@@ -713,7 +690,7 @@ specialFunctionTests = testGroup "Special function recognition"
   ]
 
 ------------------------------------------------------------------------
--- Algebraic extension case in DiffField
+-- Algebraic extension
 ------------------------------------------------------------------------
 
 algebraicExtensionTests :: TestTree
@@ -738,7 +715,7 @@ algebraicExtensionTests = testGroup "Algebraic extension (implicit differentiati
   ]
 
 ------------------------------------------------------------------------
--- Multivariate calculus: gradient, Jacobian, Hessian
+-- Multivariate calculus
 ------------------------------------------------------------------------
 
 multivariateTests :: TestTree
@@ -810,16 +787,14 @@ multivariateLimitTests = testGroup "Multivariate limits"
            MVDoesNotExist _ -> return ()
            other -> assertFailure $ "Expected MVDoesNotExist, got: " ++ show other
 
-  , testCase "lim (x,y)->(0,0) of x^2*y/(x^4+y^2) does not exist \
-             \(pathological: 0 on every line but 1/2 on y=x^2)" $
+  , testCase "lim (x,y)->(0,0) of x^2*y/(x^4+y^2) does not exist" $
       let f = Div (Mul (Pow (Var "x") (Const 2)) (Var "y"))
                   (Add (Pow (Var "x") (Const 4)) (Pow (Var "y") (Const 2)))
       in case multivariateLimit f ["x","y"] [0,0] of
            MVDoesNotExist _ -> return ()
            other -> assertFailure $ "Expected MVDoesNotExist, got: " ++ show other
 
-  , testCase "lim (x,y)->(0,0) of sin(x*y)/(x*y) = 1 \
-             \(paths through singularity are skipped)" $
+  , testCase "lim (x,y)->(0,0) of sin(x*y)/(x*y) = 1" $
       let f = Div (Sin (Mul (Var "x") (Var "y")))
                   (Mul (Var "x") (Var "y"))
       in multivariateLimit f ["x","y"] [0,0] @?= MVExists 1.0
@@ -832,7 +807,7 @@ multivariateLimitTests = testGroup "Multivariate limits"
   ]
 
 ------------------------------------------------------------------------
--- foldEuler and foldLogs post-processing
+-- foldEuler and foldLogs
 ------------------------------------------------------------------------
 
 simplifyFoldTests :: TestTree
@@ -868,11 +843,11 @@ partialFractionsTests = testGroup "Partial fractions (Risch.Primitive)"
   [ testCase "1/(x^2-1) = 0.5/(x-1) + (-0.5)/(x+1)" $
       let p = constPoly "x" algOne
           q = Poly "x" [negate algOne, algZero, algOne]
-          terms = partialFractions (ratFun p q)
-          coeffs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) terms
-          denoms = map (\(RatFun _ d) -> map algToDouble (polyCoef d)) terms
+          ts = partialFractions (ratFun p q)
+          coeffs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) ts
+          denoms = map (\(RatFun _ d) -> map algToDouble (polyCoef d)) ts
       in do
-        length terms @?= 2
+        length ts @?= 2
         assertBool "coefficients are 0.5 and -0.5"
           (abs (coeffs !! 0 - 0.5) < 1e-9 || abs (coeffs !! 0 + 0.5) < 1e-9)
         assertBool "linear denominators"
@@ -881,29 +856,29 @@ partialFractionsTests = testGroup "Partial fractions (Risch.Primitive)"
   , testCase "(x+2)/(x^2-1) = 1.5/(x-1) + (-0.5)/(x+1)" $
       let p = Poly "x" [fromQ 2, algOne]
           q = Poly "x" [negate algOne, algZero, algOne]
-          terms = partialFractions (ratFun p q)
-      in length terms @?= 2
+          ts = partialFractions (ratFun p q)
+      in length ts @?= 2
 
   , testCase "1/(x^2+1) is irreducible over Q, returned unchanged" $
       let p = constPoly "x" algOne
           q = Poly "x" [algOne, algZero, algOne]
-          terms = partialFractions (ratFun p q)
-      in length terms @?= 1
+          ts = partialFractions (ratFun p q)
+      in length ts @?= 1
 
   , testCase "1/((x-1)(x-2)(x-3)) decomposes into 3 linear terms" $
       let p = constPoly "x" algOne
           q = Poly "x" [negate (fromQ 6), fromQ 11, negate (fromQ 6), algOne]
-          terms = partialFractions (ratFun p q)
+          ts = partialFractions (ratFun p q)
       in do
-        length terms @?= 3
+        length ts @?= 3
         assertBool "all denominators are linear"
-          (all (\(RatFun _ d) -> degree d == 1) terms)
+          (all (\(RatFun _ d) -> degree d == 1) ts)
 
   , testCase "residue coefficients for 1/((x-1)(x-2)(x-3)) are 0.5, -1, 0.5" $
       let p = constPoly "x" algOne
           q = Poly "x" [negate (fromQ 6), fromQ 11, negate (fromQ 6), algOne]
-          terms = partialFractions (ratFun p q)
-          cs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) terms
+          ts = partialFractions (ratFun p q)
+          cs = map (\(RatFun n _) -> algToDouble (head (polyCoef n))) ts
           csorted = sort cs
       in assertBool "coefficients are {-1, 0.5, 0.5}"
            (abs (csorted !! 0 + 1.0) < 1e-6 &&
@@ -912,7 +887,7 @@ partialFractionsTests = testGroup "Partial fractions (Risch.Primitive)"
   ]
 
 ------------------------------------------------------------------------
--- Algebraic Risch: pattern-recognized special cases
+-- Algebraic Risch
 ------------------------------------------------------------------------
 
 algebraicRischTests :: TestTree
@@ -936,7 +911,7 @@ algebraicRischTests = testGroup "Algebraic Risch (pattern recognition)"
         Elementary _ -> return ()
         other -> assertFailure $ "Expected Elementary, got: " ++ show other
 
-  , testCase "int 1/sqrt(1+x^2) dx = log(x+sqrt(x^2+1)) (arcsinh)" $
+  , testCase "int 1/sqrt(1+x^2) dx = log(x+sqrt(x^2+1))" $
       case rischIntegrate
         (Div (Const 1) (Pow (Add (Const 1) (Pow (Var "x") (Const 2))) (Const 0.5)))
         "x" of
@@ -968,4 +943,81 @@ algebraicRischTests = testGroup "Algebraic Risch (pattern recognition)"
           got    = evalComplexExpr ("x", 0.5 :+ 0) result
           expect = asin (0.5 :+ 0)
       in complexApprox got expect
+  ]
+
+------------------------------------------------------------------------
+-- Pretty printer
+------------------------------------------------------------------------
+
+prettyTests :: TestTree
+prettyTests = testGroup "Pretty printer"
+  [ testCase "integer-valued double prints without decimal" $
+      prettyExpr (Const 2.0) @?= "2"
+
+  , testCase "rational double snaps to p/q" $
+      prettyExpr (Const (1.0/3.0)) @?= "1/3"
+
+  , testCase "rational double 2/3 snaps correctly" $
+      prettyExpr (Const (2.0/3.0)) @?= "2/3"
+
+  , testCase "Pi prints as π" $
+      prettyExpr Pi @?= "π"
+
+  , testCase "E prints as e" $
+      prettyExpr E @?= "e"
+
+  , testCase "I prints as i" $
+      prettyExpr I @?= "i"
+
+  , testCase "Var prints as name" $
+      prettyExpr (Var "x") @?= "x"
+
+  , testCase "Neg prints as -x" $
+      prettyExpr (Neg (Var "x")) @?= "-x"
+
+  , testCase "double negation collapses" $
+      prettyExpr (Neg (Neg (Var "x"))) @?= "x"
+
+  , testCase "sqrt via Pow Const 0.5" $
+      prettyExpr (Pow (Var "x") (Const 0.5)) @?= "sqrt(x)"
+
+  , testCase "Add no parens at top level" $
+      prettyExpr (Add (Var "x") (Var "y")) @?= "x + y"
+
+  , testCase "Add inside Mul gets parens" $
+      prettyExpr (Mul (Add (Var "x") (Var "y")) (Var "z")) @?= "(x + y) * z"
+
+  , testCase "Sub right-assoc: a - (b - c) parenthesizes rhs" $
+      prettyExpr (Sub (Var "a") (Sub (Var "b") (Var "c"))) @?= "a - (b - c)"
+
+  , testCase "Div right-assoc: a / (b / c) parenthesizes rhs" $
+      prettyExpr (Div (Var "a") (Div (Var "b") (Var "c"))) @?= "a / (b / c)"
+
+  , testCase "Pow base compound gets parens" $
+      prettyExpr (Pow (Add (Var "x") (Const 1.0)) (Const 2.0)) @?= "(x + 1)^2"
+
+  , testCase "Abs prints with pipes" $
+      prettyExpr (Abs (Var "x")) @?= "|x|"
+
+  , testCase "special functions print correctly" $ do
+      prettyExpr (Sin (Var "x"))    @?= "sin(x)"
+      prettyExpr (Cos (Var "x"))    @?= "cos(x)"
+      prettyExpr (Exp (Var "x"))    @?= "exp(x)"
+      prettyExpr (Log (Var "x"))    @?= "log(x)"
+      prettyExpr (Arcsin (Var "x")) @?= "arcsin(x)"
+      prettyExpr (Arccos (Var "x")) @?= "arccos(x)"
+      prettyExpr (Arctan (Var "x")) @?= "arctan(x)"
+      prettyExpr (Erf (Var "x"))    @?= "erf(x)"
+      prettyExpr (Li (Var "x"))     @?= "li(x)"
+      prettyExpr (Si (Var "x"))     @?= "Si(x)"
+      prettyExpr (Ci (Var "x"))     @?= "Ci(x)"
+      prettyExpr (Ei (Var "x"))     @?= "Ei(x)"
+
+  , testCase "nested expression: x^2 + sin(x)/x" $
+      prettyExpr (Add (Pow (Var "x") (Const 2.0))
+                      (Div (Sin (Var "x")) (Var "x")))
+        @?= "x^2 + sin(x) / x"
+
+  , testCase "Mul chains without parens" $
+      prettyExpr (Mul (Mul (Var "x") (Var "y")) (Var "z")) @?= "x * y * z"
   ]

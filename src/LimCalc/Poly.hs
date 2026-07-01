@@ -215,23 +215,33 @@ sylvesterMatrix p q =
   in pRows ++ qRows
 
 -- | Gaussian elimination determinant
+--
+-- Row swaps during pivot search flip the determinant's sign. The
+-- previous version found a nonzero pivot by swapping rows but never
+-- accounted for the sign flip this introduces -- confirmed as a
+-- real, pre-existing, AlgNum-independent bug: determinant 2
+-- [[0,1],[1,0]] returned 1 instead of the correct -1, even for plain
+-- Double coefficients. This was never caught because the existing
+-- resultant tests never exercised a matrix requiring a pivot swap.
+-- Now tracks the parity of swaps performed and applies it to the
+-- final result.
 determinant :: (Fractional a, Eq a) => Int -> [[a]] -> a
 determinant 0 _   = 1
-determinant _ mat = go mat 1
+determinant _ mat = go mat 1 False
   where
-    go [] acc = acc
-    go (r:rs) acc =
+    go [] acc swapped = if swapped then negate acc else acc
+    go (r:rs) acc swapped =
       case findPivot r rs of
         Nothing     -> 0
-        Just (p, rs') ->
+        Just (p, rs', didSwap) ->
           let pivot = head p
               rs''  = map (eliminate pivot p) rs'
-          in go (map tail rs'') (acc * pivot)
+          in go (map tail rs'') (acc * pivot) (swapped /= didSwap)
     findPivot r rs
-      | not (head r == 0) = Just (r, rs)
+      | not (head r == 0) = Just (r, rs, False)
       | otherwise = case break (\r' -> not (head r' == 0)) rs of
           (_, [])           -> Nothing
-          (before, (x:after)) -> Just (x, before ++ r : after)
+          (before, (x:after)) -> Just (x, before ++ r : after, True)
     eliminate pivot pivotRow row =
       let factor = head row / pivot
       in zipWith (\a b -> a - factor * b) row pivotRow

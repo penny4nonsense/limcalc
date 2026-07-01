@@ -1,89 +1,130 @@
 module LimCalc.Puiseux where
 
 import Data.List (sortBy)
-import Data.Ord (comparing)
+import Data.Ord  (comparing)
 
--- | A term in a Puiseux series: coefficient * h^pExp
-data PuiseuxTerm a = PuiseuxTerm
-  { pExp  :: Rational
-  , coeff :: a
+-- | A term in a log-Puiseux series: coeff * h^lpExp * log(h)^lpLog
+data LogPuiseuxTerm a = LogPuiseuxTerm
+  { lpCoeff :: a
+  , lpExp   :: Rational  -- ^ exponent of h
+  , lpLog   :: Int       -- ^ exponent of log(h); 0 = pure power term
   } deriving (Show, Eq)
 
--- | A Puiseux series
-newtype PuiseuxSeries a = PuiseuxSeries
-  { terms :: [PuiseuxTerm a]
+-- | A log-Puiseux series: finite list of terms in canonical order
+newtype LogPuiseuxSeries a = LogPuiseuxSeries
+  { lterms :: [LogPuiseuxTerm a]
   } deriving (Show, Eq)
 
--- | Sort terms by exponent
-normalize :: PuiseuxSeries a -> PuiseuxSeries a
-normalize (PuiseuxSeries ts) =
-  PuiseuxSeries $ sortBy (comparing pExp) ts
+-- | Smart constructor: pure power term (no log factor)
+pureTerm :: Rational -> a -> LogPuiseuxTerm a
+pureTerm e c = LogPuiseuxTerm c e 0
 
--- | Leading term
-leadingTerm :: PuiseuxSeries a -> Maybe (PuiseuxTerm a)
-leadingTerm (PuiseuxSeries [])    = Nothing
-leadingTerm (PuiseuxSeries (t:_)) = Just t
+-- | Smart constructor: term with log factor
+logTerm :: Rational -> Int -> a -> LogPuiseuxTerm a
+logTerm e k c = LogPuiseuxTerm c e k
+
+-- | Canonical ordering: ascending (lpExp, lpLog)
+termOrd :: LogPuiseuxTerm a -> LogPuiseuxTerm a -> Ordering
+termOrd = comparing (\t -> (lpExp t, lpLog t))
+
+-- | Sort into canonical order
+normalize :: LogPuiseuxSeries a -> LogPuiseuxSeries a
+normalize (LogPuiseuxSeries ts) = LogPuiseuxSeries (sortBy termOrd ts)
+
+-- | Leading term (lowest lpExp, then lowest lpLog within that)
+leadingTerm :: LogPuiseuxSeries a -> Maybe (LogPuiseuxTerm a)
+leadingTerm (LogPuiseuxSeries [])    = Nothing
+leadingTerm (LogPuiseuxSeries (t:_)) = Just t
 
 -- | Leading term with nonzero coefficient
-leadingTermNZ :: (Floating a, Ord a) => PuiseuxSeries a -> Maybe (PuiseuxTerm a)
-leadingTermNZ (PuiseuxSeries ts) =
-  case filter (\t -> abs (coeff t) > 1e-12) ts of
+leadingTermNZ :: (Floating a, Ord a) => LogPuiseuxSeries a -> Maybe (LogPuiseuxTerm a)
+leadingTermNZ (LogPuiseuxSeries ts) =
+  case filter (\t -> abs (lpCoeff t) > 1e-12) ts of
     []    -> Nothing
     (t:_) -> Just t
 
 -- | Remove terms with near-zero coefficients
-stripZeros :: (Floating a, Ord a) => PuiseuxSeries a -> PuiseuxSeries a
-stripZeros (PuiseuxSeries ts) =
-  PuiseuxSeries $ filter (\t -> abs (coeff t) > 1e-12) ts
+stripZeros :: (Floating a, Ord a) => LogPuiseuxSeries a -> LogPuiseuxSeries a
+stripZeros (LogPuiseuxSeries ts) =
+  LogPuiseuxSeries $ filter (\t -> abs (lpCoeff t) > 1e-12) ts
 
--- | Combine terms with equal exponents
-combineLike :: (Floating a, Ord a) => PuiseuxSeries a -> PuiseuxSeries a -> PuiseuxSeries a
-combineLike (PuiseuxSeries s1) (PuiseuxSeries s2) =
-  stripZeros $ normalize $ PuiseuxSeries $ mergePlus s1 s2
+-- | Combine like terms: same (lpExp, lpLog) pair
+combineLike :: (Floating a, Ord a)
+            => LogPuiseuxSeries a -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+combineLike (LogPuiseuxSeries s1) (LogPuiseuxSeries s2) =
+  stripZeros $ normalize $ LogPuiseuxSeries $ mergePlus s1 s2
   where
+    key t = (lpExp t, lpLog t)
     mergePlus [] ys = ys
     mergePlus xs [] = xs
-    mergePlus (x:xs) (y:ys)
-      | pExp x == pExp y =
-          PuiseuxTerm (pExp x) (coeff x + coeff y)
-            : mergePlus xs ys
-      | pExp x < pExp y  = x : mergePlus xs (y:ys)
-      | otherwise        = y : mergePlus (x:xs) ys
+    mergePlus (x:xs) (y:ys) = case compare (key x) (key y) of
+      EQ -> LogPuiseuxTerm (lpCoeff x + lpCoeff y) (lpExp x) (lpLog x)
+              : mergePlus xs ys
+      LT -> x : mergePlus xs (y:ys)
+      GT -> y : mergePlus (x:xs) ys
 
--- | Add two Puiseux series
-addSeries :: (Floating a, Ord a) => PuiseuxSeries a -> PuiseuxSeries a -> PuiseuxSeries a
-addSeries s1 s2 = combineLike s1 s2
+-- | Add two log-Puiseux series
+addSeries :: (Floating a, Ord a)
+          => LogPuiseuxSeries a -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+addSeries = combineLike
 
--- | Scale a series by a constant
-scaleSeries :: (Floating a, Ord a) => a -> PuiseuxSeries a -> PuiseuxSeries a
-scaleSeries c (PuiseuxSeries ts) =
-  stripZeros $ PuiseuxSeries $ map (\t -> t { coeff = c * coeff t }) ts
+-- | Scale by a constant
+scaleSeries :: (Floating a, Ord a)
+            => a -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+scaleSeries c (LogPuiseuxSeries ts) =
+  stripZeros $ LogPuiseuxSeries
+    [ LogPuiseuxTerm (c * lpCoeff t) (lpExp t) (lpLog t) | t <- ts ]
 
--- | Multiply two Puiseux series (Cauchy product)
---
--- combineLike's mergePlus assumes both of its inputs already have at
--- most one term per exponent (that invariant is what lets addSeries
--- just call it directly on two series). The raw Cauchy cross-product
--- below does NOT have that property -- multiple (t1, t2) pairs can
--- land on the same exponent -- so dumping it straight into a single
--- combineLike call (merged against an empty series) was a no-op:
--- mergePlus xs [] = xs, meaning no consolidation ever happened, and
--- duplicate-exponent terms survived side by side after sorting.
---
--- Folding each cross term through combineLike one at a time restores
--- the intended invariant at every step, so duplicate exponents are
--- actually summed.
-mulSeries :: (Floating a, Ord a) => PuiseuxSeries a -> PuiseuxSeries a -> PuiseuxSeries a
-mulSeries (PuiseuxSeries s1) (PuiseuxSeries s2) =
+-- | Multiply two log-Puiseux series.
+-- Product rule: (c1 h^p1 log^k1) * (c2 h^p2 log^k2)
+--             = c1*c2 * h^(p1+p2) * log^(k1+k2)
+-- Type is closed under multiplication.
+mulSeries :: (Floating a, Ord a)
+          => LogPuiseuxSeries a -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+mulSeries (LogPuiseuxSeries s1) (LogPuiseuxSeries s2) =
   stripZeros $ normalize $
-    foldr combineLike (PuiseuxSeries [])
-      [ PuiseuxSeries [PuiseuxTerm (pExp t1 + pExp t2) (coeff t1 * coeff t2)]
+    foldr combineLike (LogPuiseuxSeries [])
+      [ LogPuiseuxSeries
+          [ LogPuiseuxTerm (lpCoeff t1 * lpCoeff t2)
+                           (lpExp t1 + lpExp t2)
+                           (lpLog t1 + lpLog t2) ]
       | t1 <- s1, t2 <- s2
       ]
 
--- | Get the constant term (h^0 coefficient)
-constantTerm :: (Floating a, Ord a) => PuiseuxSeries a -> a
-constantTerm (PuiseuxSeries []) = 0
-constantTerm (PuiseuxSeries (t:_))
-  | pExp t == 0 = coeff t
-  | otherwise   = 0
+-- | Constant term: coefficient of h^0 * log(h)^0
+constantTerm :: (Floating a, Ord a) => LogPuiseuxSeries a -> a
+constantTerm (LogPuiseuxSeries []) = 0
+constantTerm (LogPuiseuxSeries (t:_))
+  | lpExp t == 0 && lpLog t == 0 = lpCoeff t
+  | otherwise                    = 0
+
+-- | Extract the pure h^0 coefficient regardless of log power
+-- (used for log-expansion where the constant may carry a log term)
+constantCoeff :: (Floating a, Ord a) => Rational -> LogPuiseuxSeries a -> [(Int, a)]
+constantCoeff e (LogPuiseuxSeries ts) =
+  [ (lpLog t, lpCoeff t) | t <- ts, lpExp t == e ]
+
+-- | Remove all terms at a given (lpExp, lpLog) pair
+removeTerm :: Rational -> Int -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+removeTerm e k (LogPuiseuxSeries ts) =
+  LogPuiseuxSeries $ filter (\t -> not (lpExp t == e && lpLog t == k)) ts
+
+-- | Remove all terms at a given lpExp (all log powers)
+removeExp :: Rational -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+removeExp e (LogPuiseuxSeries ts) =
+  LogPuiseuxSeries $ filter (\t -> lpExp t /= e) ts
+
+-- | Truncate to terms at or below a given order (lpExp)
+truncateToOrder :: Rational -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+truncateToOrder maxOrder (LogPuiseuxSeries ts) =
+  LogPuiseuxSeries $ filter (\t -> lpExp t <= maxOrder) ts
+
+-- | Shift all lpExp values by delta
+shiftExponents :: Rational -> LogPuiseuxSeries a -> LogPuiseuxSeries a
+shiftExponents delta (LogPuiseuxSeries ts) =
+  LogPuiseuxSeries [ LogPuiseuxTerm (lpCoeff t) (lpExp t + delta) (lpLog t)
+                   | t <- ts ]
+
+-- | True if the series has any log terms (lpLog > 0)
+hasLogTerms :: LogPuiseuxSeries a -> Bool
+hasLogTerms (LogPuiseuxSeries ts) = any (\t -> lpLog t > 0) ts

@@ -78,6 +78,7 @@ library
                       LimCalc.AlgNum
                       LimCalc.BivPoly
                       LimCalc.QPoly
+                      LimCalc.Pretty
 
     -- Modules included in this library but not exported.
     -- other-modules:
