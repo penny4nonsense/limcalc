@@ -96,6 +96,7 @@ library
                       LimCalc.Algebra.BivPoly
                       LimCalc.Algebra.QPoly
                       LimCalc.Pretty
+                      LimCalc.Core.ExprJSON
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -106,7 +107,8 @@ library
     -- Other library packages from which modules are imported.
     build-depends:
         base ^>=4.20.2.0,
-        containers
+        containers,
+        aeson
 
     -- Directories containing source files.
     hs-source-dirs:   src
@@ -142,4 +144,15 @@ test-suite limcalc-test
         limcalc,
         tasty,
         tasty-hunit,
+        containers
+    
+executable limcalc-cli
+    default-language: GHC2021
+    hs-source-dirs:   app
+    main-is:          Main.hs
+    build-depends:
+        base ^>=4.20.2.0,
+        limcalc,
+        aeson,
+        bytestring,
         containers
