@@ -3,7 +3,8 @@
 -- Handles integration of rational functions in a single exponential
 -- extension @t = exp(θ)@ where @θ' = D(θ)@ is a constant.
 -- Covers @e^(ax)@, @sin(ax)@, and @cos(ax)@ (the last two via the
--- Euler substitution @t = e^(ix)@ used in 'LimCalc.Risch').
+-- Euler substitution @t = e^(ix)@ used in
+-- 'LimCalc.Integration.Risch').
 --
 -- = Algorithm outline
 --
@@ -22,12 +23,13 @@
 --
 -- = Complex roots
 --
--- Unlike 'LimCalc.Risch.Primitive', this module uses 'findComplexRoots'
--- (not 'findRationalRoots') in 'rothsteinTragerExp'. The field has
--- already been extended to include @i@ via the Euler substitution, so
--- complex-coefficient logarithms are legitimate here. The imaginary
--- parts cancel when the Euler-form output is folded back to @sin\/cos@
--- via 'LimCalc.Simplify.foldEuler'.
+-- Unlike 'LimCalc.Integration.Risch.Primitive', this module uses
+-- 'findComplexRoots' (not 'findRationalRoots') in
+-- 'rothsteinTragerExp'. The field has already been extended to include
+-- @i@ via the Euler substitution, so complex-coefficient logarithms
+-- are legitimate here. The imaginary parts cancel when the Euler-form
+-- output is folded back to @sin\/cos@ via
+-- 'LimCalc.Core.Simplify.foldEuler'.
 --
 -- = Key corrections from the original implementation
 --
@@ -39,7 +41,7 @@
 -- * Laurent terms (denominator = pure power of @t@) are detected via
 --   'monomialDegree' and integrated directly, bypassing Rothstein-Trager
 --   (which degenerates on such inputs since @gcd(t^k, D(t^k)) = t^k ≠ 1@).
-module LimCalc.Risch.Exponential
+module LimCalc.Integration.Risch.Exponential
   ( -- * Integration
     integrateExponential
   , integrateExp
@@ -62,13 +64,13 @@ module LimCalc.Risch.Exponential
   , orElse
   ) where
 
-import LimCalc.Poly
-import LimCalc.RationalFunction
-import LimCalc.DiffField
-import LimCalc.Expr
-import LimCalc.Simplify
-import LimCalc.Risch.Primitive
-import LimCalc.AlgNum
+import LimCalc.Algebra.Poly
+import LimCalc.Algebra.RationalFunction
+import LimCalc.Differentiation.DiffField
+import LimCalc.Core.Expr
+import LimCalc.Core.Simplify
+import LimCalc.Integration.Risch.Primitive
+import LimCalc.Algebra.AlgNum
 
 -- | Result of the Risch exponential-case integration algorithm.
 data ExponentialResult

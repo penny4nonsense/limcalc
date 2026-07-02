@@ -7,13 +7,14 @@
 --
 -- This module provides the arithmetic and structural operations on
 -- rational functions needed by the Risch integrator
--- ('LimCalc.Risch.Primitive', 'LimCalc.Risch.Exponential') and the
--- differential field tower ('LimCalc.DiffField'). Hermite reduction
+-- ('LimCalc.Integration.Risch.Primitive',
+-- 'LimCalc.Integration.Risch.Exponential') and the differential field
+-- tower ('LimCalc.Differentiation.DiffField'). Hermite reduction
 -- ('hermiteReduce') is the key structural operation: it decomposes a
 -- rational function into a "rational part" (whose integral is
 -- rational) and a "logarithmic part" (a proper fraction over a
 -- squarefree denominator, whose integral involves logarithms).
-module LimCalc.RationalFunction
+module LimCalc.Algebra.RationalFunction
   ( -- * Type
     RatFun (..)
     -- * Constructors
@@ -37,7 +38,7 @@ module LimCalc.RationalFunction
   , extGCD
   ) where
 
-import LimCalc.Poly
+import LimCalc.Algebra.Poly
 
 -- | A rational function @p(x) \/ q(x)@ in reduced form.
 --

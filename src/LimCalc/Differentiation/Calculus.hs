@@ -6,28 +6,32 @@
 -- limcalc provides two symbolic differentiation functions:
 --
 -- * 'diff': the /series extraction path/. Expands @f(x + h)@ as a
---   'LimCalc.SymPuiseux.SymPuiseuxSeries' via 'LimCalc.SymExpand.symExpand'
---   and reads off the @h^1@ coefficient. Produces a symbolic 'Expr'
---   for the derivative. Used for univariate symbolic differentiation.
+--   'LimCalc.Series.SymPuiseux.SymPuiseuxSeries' via
+--   'LimCalc.Series.SymExpand.symExpand' and reads off the @h^1@
+--   coefficient. Produces a symbolic 'Expr' for the derivative.
+--   Used for univariate symbolic differentiation.
 --
 -- * 'partialDiff': the /algebraic chain-rule path/. Differentiates
---   by structural recursion via 'LimCalc.DiffField.deriveExpr'. Correct
---   for iterated partial derivatives: differentiating the result of
---   a previous 'partialDiff' works because 'deriveExpr' treats all
+--   by structural recursion via
+--   'LimCalc.Differentiation.DiffField.deriveExpr'. Correct for
+--   iterated partial derivatives: differentiating the result of a
+--   previous 'partialDiff' works because 'deriveExpr' treats all
 --   variables other than the specified one as constants, with no
 --   expansion artifacts.
 --
 -- The series path ('diff') generates Taylor coefficients by iterating
--- 'LimCalc.DiffField.deriveBase', making it a consequence of the
--- algebraic path rather than an independent implementation.
+-- 'LimCalc.Differentiation.DiffField.deriveBase', making it a
+-- consequence of the algebraic path rather than an independent
+-- implementation.
 --
 -- = Numeric differentiation
 --
 -- 'derivative' and 'nthDerivative' evaluate derivatives numerically
 -- at a specific point by expanding @f(x₀ + h)@ as a
--- 'LimCalc.Puiseux.LogPuiseuxSeries' via 'LimCalc.Expand.expand' and
--- reading off the appropriate coefficient.
-module LimCalc.Calculus
+-- 'LimCalc.Series.Puiseux.LogPuiseuxSeries' via
+-- 'LimCalc.Series.Expand.expand' and reading off the appropriate
+-- coefficient.
+module LimCalc.Differentiation.Calculus
   ( -- * Numeric differentiation
     derivative
   , nthDerivative
@@ -44,15 +48,15 @@ module LimCalc.Calculus
   , factorial
   ) where
 
-import LimCalc.Expr
-import LimCalc.Puiseux
-import LimCalc.Types
-import LimCalc.Expand hiding (factorial)
-import LimCalc.AlgNum
-import LimCalc.SymExpand
-import LimCalc.SymPuiseux
-import LimCalc.DiffField
-import LimCalc.Simplify
+import LimCalc.Core.Expr
+import LimCalc.Series.Puiseux
+import LimCalc.Core.Types
+import LimCalc.Series.Expand hiding (factorial)
+import LimCalc.Algebra.AlgNum
+import LimCalc.Series.SymExpand
+import LimCalc.Series.SymPuiseux
+import LimCalc.Differentiation.DiffField
+import LimCalc.Core.Simplify
 import qualified Data.Map.Strict as Map
 
 -- | Numerically evaluate the derivative of @f@ with respect to @var@

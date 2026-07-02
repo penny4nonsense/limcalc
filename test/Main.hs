@@ -4,24 +4,24 @@ import Data.Complex
 import Test.Tasty
 import Test.Tasty.HUnit
 import qualified Data.Map.Strict as Map
-import LimCalc.Expr
-import LimCalc.Puiseux
-import LimCalc.Expand
-import LimCalc.Calculus
-import LimCalc.Simplify
-import LimCalc.Limit
-import LimCalc.Poly
-import LimCalc.RationalFunction
-import LimCalc.DiffField
-import LimCalc.Risch.Primitive
-import LimCalc.Risch.Exponential
-import LimCalc.Risch
-import LimCalc.Types
-import LimCalc.AlgNum
+import LimCalc.Core.Expr
+import LimCalc.Series.Puiseux
+import LimCalc.Series.Expand
+import LimCalc.Differentiation.Calculus
+import LimCalc.Core.Simplify
+import LimCalc.Differentiation.Limit
+import LimCalc.Algebra.Poly
+import LimCalc.Algebra.RationalFunction
+import LimCalc.Differentiation.DiffField
+import LimCalc.Integration.Risch.Primitive
+import LimCalc.Integration.Risch.Exponential
+import LimCalc.Integration.Risch
+import LimCalc.Core.Types
+import LimCalc.Algebra.AlgNum
 import Data.List (sort)
-import LimCalc.QPoly
-import LimCalc.BivPoly
-import LimCalc.MultivariateLimit
+import LimCalc.Algebra.QPoly
+import LimCalc.Algebra.BivPoly
+import LimCalc.Differentiation.MultivariateLimit
 import LimCalc.Pretty
 
 main :: IO ()

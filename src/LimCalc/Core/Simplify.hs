@@ -19,7 +19,7 @@
 -- simplification trig- and log-aware, introducing unwanted
 -- interactions. They are instead called explicitly at integration
 -- result boundaries in 'LimCalc.Risch'.
-module LimCalc.Simplify
+module LimCalc.Core.Simplify
   ( -- * Algebraic simplification
     simplify
   , simplifyOnce
@@ -47,7 +47,7 @@ module LimCalc.Simplify
   , notConst
   ) where
 
-import LimCalc.Expr
+import LimCalc.Core.Expr
 
 -- | Simplify an 'Expr' by repeatedly applying algebraic identities
 -- until a fixed point is reached.

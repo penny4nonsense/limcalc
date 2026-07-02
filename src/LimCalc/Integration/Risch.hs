@@ -11,9 +11,9 @@
 --
 -- * 'PolynomialCase': integrate term by term.
 -- * 'RationalCase': Hermite reduction + Rothstein-Trager
---   ('LimCalc.Risch.Primitive.integratePrimitive').
+--   ('LimCalc.Integration.Risch.Primitive.integratePrimitive').
 -- * 'ExponentialCase': direct integration of @exp(f)@ when @f' = const@
---   ('LimCalc.Risch.Exponential.integrateExp').
+--   ('LimCalc.Integration.Risch.Exponential.integrateExp').
 -- * 'LogCase': integration by parts — @∫ g·log(h) dx = G·log(h) − ∫ G·(h'\/h) dx@
 --   where @G = ∫ g dx@.
 -- * 'TrigCase': Euler substitution @t = e^(ix)@, converting @sin\/cos@
@@ -34,10 +34,11 @@
 --
 -- @sin(x)@ and @cos(x)@ are integrated via the Euler substitution
 -- @t = e^(ix)@, which converts the integrand to a rational function
--- in @t@. The exponential-case Risch machinery ('LimCalc.Risch.Exponential')
--- then integrates this rational function. The result is converted back
--- to @sin\/cos@ form via 'LimCalc.Simplify.foldEuler'.
-module LimCalc.Risch
+-- in @t@. The exponential-case Risch machinery
+-- ('LimCalc.Integration.Risch.Exponential') then integrates this
+-- rational function. The result is converted back to @sin\/cos@ form
+-- via 'LimCalc.Core.Simplify.foldEuler'.
+module LimCalc.Integration.Risch
   ( -- * Top-level integration
     rischIntegrate
   , RischResult (..)
@@ -66,14 +67,14 @@ module LimCalc.Risch
   , ratFunDoubleToAlgNum
   ) where
 
-import LimCalc.Expr
-import LimCalc.Poly
-import LimCalc.RationalFunction
-import LimCalc.DiffField
-import LimCalc.Simplify
-import LimCalc.Risch.Primitive
-import LimCalc.Risch.Exponential
-import LimCalc.AlgNum
+import LimCalc.Core.Expr
+import LimCalc.Algebra.Poly
+import LimCalc.Algebra.RationalFunction
+import LimCalc.Differentiation.DiffField
+import LimCalc.Core.Simplify
+import LimCalc.Integration.Risch.Primitive
+import LimCalc.Integration.Risch.Exponential
+import LimCalc.Algebra.AlgNum
 
 -- | The result of Risch integration.
 data RischResult

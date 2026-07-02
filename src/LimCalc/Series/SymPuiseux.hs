@@ -7,14 +7,14 @@
 -- a series whose coefficients are expressions in @x@, from which the
 -- derivative (the @h^1@ coefficient) can be read off as an 'Expr'.
 --
--- Unlike 'LimCalc.Puiseux.LogPuiseuxSeries', this type supports only
+-- Unlike 'LimCalc.Series.Puiseux.LogPuiseuxSeries', this type supports only
 -- pure power terms (no @log(h)@ terms), since the symbolic expansion
 -- path is used for differentiation only and the functions it handles
 -- are all analytic at generic points.
 --
 -- Coefficients are /not/ simplified automatically; callers apply
--- 'LimCalc.Simplify.simplify' to the extracted coefficient as needed.
-module LimCalc.SymPuiseux
+-- 'LimCalc.Core.Simplify.simplify' to the extracted coefficient as needed.
+module LimCalc.Series.SymPuiseux
   ( -- * Types
     SymPuiseuxTerm (..)
   , SymPuiseuxSeries (..)
@@ -38,7 +38,7 @@ module LimCalc.SymPuiseux
 
 import Data.List (sortBy)
 import Data.Ord (comparing)
-import LimCalc.Expr
+import LimCalc.Core.Expr
 
 -- | A single term in a symbolic Puiseux series: @c(x) · h^p@.
 --
@@ -130,8 +130,8 @@ symCoeffAt n (SymPuiseuxSeries ts) =
   case filter (\t -> symExp t == n) ts of
     []     -> Const 0
     [t]    -> symCoeff t
-    (t:ts) -> foldl (\acc t' -> Add acc (symCoeff t')) (symCoeff t) ts
-
+    (t:ts') -> foldl (\acc t' -> Add acc (symCoeff t')) (symCoeff t) ts'
+    
 -- | Return the leading term (smallest exponent), or 'Nothing' if the
 -- series is empty.
 symLeadingTerm :: SymPuiseuxSeries -> Maybe SymPuiseuxTerm

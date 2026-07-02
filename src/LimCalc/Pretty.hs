@@ -42,7 +42,7 @@ module LimCalc.Pretty
   , parensIf
   ) where
 
-import LimCalc.Expr
+import LimCalc.Core.Expr
 import Data.Ratio (Ratio, numerator, denominator, (%))
 
 -- | Pretty-print an 'Expr' with minimal parentheses.

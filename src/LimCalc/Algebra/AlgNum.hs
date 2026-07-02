@@ -34,7 +34,7 @@
 -- 'refineToRoot' falls back to 'pinNumerically', pinning the value
 -- as an approximate degree-1 algebraic number. This trades algebraic
 -- exactness for termination.
-module LimCalc.AlgNum
+module LimCalc.Algebra.AlgNum
   ( -- * Types
     Q
   , IsoRect (..)
@@ -78,8 +78,8 @@ import Data.Ratio
 import Data.Complex
 import Data.List (minimumBy)
 import Data.Ord (comparing)
-import LimCalc.QPoly
-import LimCalc.BivPoly
+import LimCalc.Algebra.QPoly
+import LimCalc.Algebra.BivPoly
 
 -- | Exact rational number (alias for clarity).
 type Q = Rational

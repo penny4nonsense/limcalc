@@ -7,7 +7,7 @@
 --
 -- = Relationship to the numeric expansion path
 --
--- 'LimCalc.Expand.expand' performs the same conceptual operation but
+-- 'LimCalc.Series.Expand.expand' performs the same conceptual operation but
 -- evaluates coefficients numerically as 'AlgNum' values. 'symExpand'
 -- keeps coefficients symbolic so that the result is an 'Expr' rather
 -- than a number. The Taylor series generators here (@sinSymTaylor@,
@@ -22,7 +22,7 @@
 -- generic points ('Li', 'Abs') return 'Unknown'. This is acceptable
 -- for differentiation, since the derivative of a smooth function at
 -- a generic point is always a pure power series.
-module LimCalc.SymExpand
+module LimCalc.Series.SymExpand
   ( -- * Symbolic expansion
     symExpand
     -- * Taylor series generators
@@ -48,11 +48,11 @@ module LimCalc.SymExpand
   , depth
   ) where
 
-import LimCalc.Expr
-import LimCalc.SymPuiseux
-import LimCalc.Types
-import LimCalc.DiffField (deriveBase)
-import LimCalc.Simplify
+import LimCalc.Core.Expr
+import LimCalc.Series.SymPuiseux
+import LimCalc.Core.Types
+import LimCalc.Differentiation.DiffField (deriveBase)
+import LimCalc.Core.Simplify
 import Data.Ratio (numerator, denominator)
 
 -- | Symbolically expand @f(x + h)@ as a 'SymPuiseuxSeries' in @h@.
@@ -62,7 +62,7 @@ import Data.Ratio (numerator, denominator)
 -- @∑ cₙ(x) · h^n@ where each @cₙ(x)@ is an 'Expr'.
 --
 -- The @h^1@ coefficient is the symbolic derivative of @f@ with
--- respect to @var@, extracted by 'LimCalc.Calculus.diff' via
+-- respect to @var@, extracted by 'LimCalc.Differentiation.Calculus.diff' via
 -- 'symCoeffAt'.
 symExpand :: Expr -> String -> Either ExpandError SymPuiseuxSeries
 

@@ -1,8 +1,8 @@
 -- | Univariate limit computation via log-Puiseux series expansion.
 --
 -- Limits are computed by expanding @f(x₀ + h)@ as a log-Puiseux
--- series in @h@ via 'LimCalc.Expand.expand', then reading off the
--- behaviour as @h → 0⁺@:
+-- series in @h@ via 'LimCalc.Series.Expand.expand', then reading off
+-- the behaviour as @h → 0⁺@:
 --
 -- * If the series is identically zero (all terms vanish), the limit is 0.
 -- * If the leading term has negative exponent, the function has a pole.
@@ -23,7 +23,7 @@
 -- (both expand around @x₀@ from the right). True left-hand limits
 -- would require expanding around @x₀ - h@ instead; this is a known
 -- gap.
-module LimCalc.Limit
+module LimCalc.Differentiation.Limit
   ( -- * Limit computation
     limit
   , limitRight
@@ -32,11 +32,11 @@ module LimCalc.Limit
   , LimitResult (..)
   ) where
 
-import LimCalc.Expr
-import LimCalc.Types
-import LimCalc.Expand
-import LimCalc.Puiseux
-import LimCalc.AlgNum
+import LimCalc.Core.Expr
+import LimCalc.Core.Types
+import LimCalc.Series.Expand
+import LimCalc.Series.Puiseux
+import LimCalc.Algebra.AlgNum
 import qualified Data.Map.Strict as Map
 
 -- | Compute @lim_{var → x₀} f@ via log-Puiseux series expansion.

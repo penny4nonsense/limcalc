@@ -1,11 +1,12 @@
 -- | Shared types used across the limcalc expansion and calculus pipeline.
 --
 -- This module exists to break import cycles: 'ExpandResult' is needed
--- by both 'LimCalc.Expand' and 'LimCalc.Calculus', and 'Point' is
--- needed by 'LimCalc.Expand' and 'LimCalc.MultivariateLimit'. Placing
--- them here lets all consumers import a single lightweight module
--- without pulling in the full expansion engine.
-module LimCalc.Types
+-- by both 'LimCalc.Series.Expand' and 'LimCalc.Differentiation.Calculus',
+-- and 'Point' is needed by 'LimCalc.Series.Expand' and
+-- 'LimCalc.Differentiation.MultivariateLimit'. Placing them here lets
+-- all consumers import a single lightweight module without pulling in
+-- the full expansion engine.
+module LimCalc.Core.Types
   ( -- * Points
     Point
     -- * Expansion errors
@@ -15,13 +16,13 @@ module LimCalc.Types
   ) where
 
 import Data.Map.Strict (Map)
-import LimCalc.Puiseux
-import LimCalc.AlgNum
+import LimCalc.Series.Puiseux
+import LimCalc.Algebra.AlgNum
 
 -- | A point in a (possibly multivariate) domain: a map from variable
 -- names to their 'AlgNum' values.
 --
--- Used as the base point @x₀@ in 'LimCalc.Expand.expand': the
+-- Used as the base point @x₀@ in 'LimCalc.Series.Expand.expand': the
 -- expansion computes the log-Puiseux series of @f(x₀ + h)@ in @h@.
 type Point = Map String AlgNum
 

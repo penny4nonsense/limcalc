@@ -26,7 +26,24 @@ version:            0.1.0.0
 synopsis:           Limit-based symbolic calculus engine using Puiseux series.
 
 -- A longer description of the package.
--- description:
+description:
+    limcalc is a symbolic calculus engine grounded in Puiseux series
+    limit definitions. The core thesis: the derivative is a limit, so
+    compute it that way — expand f(x+h) as a log-Puiseux series in h
+    and read off the h^1 coefficient. This produces a system that
+    handles poles, branch points, and non-analytic points naturally
+    rather than by special-case patching.
+    .
+    Capabilities include univariate and multivariate limits, symbolic
+    and numeric differentiation (gradient, Jacobian, Hessian), and
+    integration via the Risch algorithm with support for rational
+    functions, exponential and logarithmic integrands, trigonometric
+    functions via Euler substitution, and recognition of non-elementary
+    integrals (erf, li, Si, Ci, Ei).
+    .
+    The log-Puiseux series type supports terms of the form
+    c * h^p * log(h)^k, enabling exact expansion of functions with
+    logarithmic singularities such as Ci and Ei near zero.
 
 -- The license under which the package is released.
 license:            MIT
@@ -59,25 +76,25 @@ library
     import:           warnings
 
     -- Modules exported by the library.
-    exposed-modules:  LimCalc.Expr
-                      LimCalc.Puiseux
-                      LimCalc.Types
-                      LimCalc.Expand
-                      LimCalc.Calculus
-                      LimCalc.SymPuiseux
-                      LimCalc.SymExpand
-                      LimCalc.Simplify
-                      LimCalc.Limit
-                      LimCalc.MultivariateLimit
-                      LimCalc.Poly
-                      LimCalc.RationalFunction
-                      LimCalc.DiffField
-                      LimCalc.Risch.Primitive
-                      LimCalc.Risch.Exponential 
-                      LimCalc.Risch
-                      LimCalc.AlgNum
-                      LimCalc.BivPoly
-                      LimCalc.QPoly
+    exposed-modules:  LimCalc.Core.Expr
+                      LimCalc.Series.Puiseux
+                      LimCalc.Core.Types
+                      LimCalc.Series.Expand
+                      LimCalc.Differentiation.Calculus
+                      LimCalc.Series.SymPuiseux
+                      LimCalc.Series.SymExpand
+                      LimCalc.Core.Simplify
+                      LimCalc.Differentiation.Limit
+                      LimCalc.Differentiation.MultivariateLimit
+                      LimCalc.Algebra.Poly
+                      LimCalc.Algebra.RationalFunction
+                      LimCalc.Differentiation.DiffField
+                      LimCalc.Integration.Risch.Primitive
+                      LimCalc.Integration.Risch.Exponential 
+                      LimCalc.Integration.Risch
+                      LimCalc.Algebra.AlgNum
+                      LimCalc.Algebra.BivPoly
+                      LimCalc.Algebra.QPoly
                       LimCalc.Pretty
 
     -- Modules included in this library but not exported.

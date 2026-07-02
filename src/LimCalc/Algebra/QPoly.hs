@@ -3,11 +3,11 @@
 -- This module provides two types:
 --
 -- * 'GaussianQ' — exact Gaussian rationals @a + bi@ where @a, b ∈ ℚ@,
---   used as evaluation points in 'LimCalc.AlgNum' and as the
+--   used as evaluation points in 'LimCalc.Algebra.AlgNum' and as the
 --   coefficient type for isolating rectangles.
 --
 -- * 'QPoly' — univariate polynomials over ℚ (ascending-degree
---   coefficient lists), used as minimal polynomials in 'LimCalc.AlgNum'
+--   coefficient lists), used as minimal polynomials in 'LimCalc.Algebra.AlgNum'
 --   and as the coefficient ring for bivariate resultant computation
 --   in 'LimCalc.BivPoly'.
 --
@@ -20,7 +20,7 @@
 -- division (via 'qDivModPoly'), which is only valid when the
 -- division is known to be exact by construction; see the instance
 -- documentation for the caveat.
-module LimCalc.QPoly
+module LimCalc.Algebra.QPoly
   ( -- * Gaussian rationals
     GaussianQ (..)
   , gaussianNorm
@@ -54,7 +54,7 @@ import Data.Ratio
 -- | An exact Gaussian rational @a + bi@ where @a, b ∈ ℚ@.
 --
 -- Used as evaluation points for minimal polynomials in
--- 'LimCalc.AlgNum.algEval', and as the corner type for isolating
+-- 'LimCalc.Algebra.AlgNum.algEval', and as the corner type for isolating
 -- rectangles ('LimCalc.AlgNum.IsoRect').
 data GaussianQ = GQ
   { realQ :: Rational
@@ -188,8 +188,8 @@ qPow p n = qMulPoly p (qPow p (n-1))
 -- | 'Num' instance for 'QPoly'.
 --
 -- Allows 'QPoly' to be used as the coefficient type of
--- 'LimCalc.Poly.Poly', enabling bivariate polynomial arithmetic via
--- the generic univariate machinery in 'LimCalc.BivPoly'. The 'abs'
+-- 'LimCalc.Algebra.Poly.Poly', enabling bivariate polynomial arithmetic via
+-- the generic univariate machinery in 'LimCalc.Algebra.BivPoly'. The 'abs'
 -- method returns the polynomial unchanged, since magnitude is not
 -- meaningful for a polynomial ring; it is only invoked incidentally
 -- by generic code paths that do not actually use it for 'QPoly'.
@@ -206,7 +206,7 @@ instance Num QPoly where
 -- Division is exact polynomial quotient via 'qDivModPoly', discarding
 -- the remainder. This is only correct when the division is exact by
 -- construction — as in the subresultant and resultant algorithms in
--- 'LimCalc.BivPoly' that motivated this instance. Using @\/@ where
+-- 'LimCalc.Algebra.BivPoly' that motivated this instance. Using @\/@ where
 -- the division is not exact will silently drop a nonzero remainder;
 -- prefer 'qDivModPoly' directly in those cases.
 instance Fractional QPoly where
@@ -216,7 +216,7 @@ instance Fractional QPoly where
 -- | Euclidean division of 'QPoly' values: @qDivModPoly p q = (quot, rem)@
 -- where @p = quot * q + rem@ and @degree rem < degree q@.
 --
--- Required because 'LimCalc.BivPoly'\'s subresultant algorithm divides
+-- Required because 'LimCalc.Algebra.BivPoly'\'s subresultant algorithm divides
 -- by non-constant 'QPoly' leading coefficients. An earlier stub only
 -- handled degree-0 divisors and returned the numerator unchanged
 -- otherwise, silently corrupting the subresultant pseudo-remainder

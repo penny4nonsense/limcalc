@@ -14,7 +14,7 @@
 -- 'Const' currently holds a 'Double'; the intention is to replace
 -- this with 'AlgNum' once the algebraic number tower is sufficiently
 -- complete to handle all coefficient arithmetic symbolically.
-module LimCalc.Expr
+module LimCalc.Core.Expr
   ( -- * Core AST
     Expr (..)
     -- * Derived functions

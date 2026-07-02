@@ -16,7 +16,7 @@
 --
 -- = Determinant method
 --
--- The Sylvester matrix is constructed via 'LimCalc.Poly.sylvesterMatrix'
+-- The Sylvester matrix is constructed via 'LimCalc.Algebra.Poly.sylvesterMatrix'
 -- (which only uses ring operations), but the determinant is computed
 -- via cofactor expansion ('cofactorDet') rather than Gaussian
 -- elimination. Gaussian elimination requires division by pivots;
@@ -30,9 +30,9 @@
 --
 -- The raw resultant typically has repeated factors. 'squarefreeRadical'
 -- reduces it to its squarefree part (product of distinct irreducible
--- factors) via Yun's algorithm, since 'LimCalc.AlgNum.refineToRoot'
+-- factors) via Yun's algorithm, since 'LimCalc.Algebra.AlgNum.refineToRoot'
 -- only needs the root set, not multiplicities.
-module LimCalc.BivPoly
+module LimCalc.Algebra.BivPoly
   ( -- * Type
     BivPoly (..)
     -- * Constructors
@@ -77,8 +77,8 @@ module LimCalc.BivPoly
   , substXOverYAsPolyInY
   ) where
 
-import LimCalc.QPoly
-import qualified LimCalc.Poly as Poly
+import LimCalc.Algebra.QPoly
+import qualified LimCalc.Algebra.Poly as Poly
 
 -- | A bivariate polynomial @p(x, y) = ∑ cᵢ(x) · yⁱ@, represented
 -- as a univariate polynomial in @y@ with 'QPoly'-in-@x@ coefficients.

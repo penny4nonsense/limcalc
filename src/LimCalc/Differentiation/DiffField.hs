@@ -19,16 +19,17 @@
 -- * 'deriveExpr' (this module): the /algebraic chain-rule path/.
 --   Differentiates by structural recursion, treating each constructor
 --   as a known primitive. Correct for iterated partial derivatives.
---   Used by 'LimCalc.Calculus.partialDiff'.
+--   Used by 'LimCalc.Differentiation.Calculus.partialDiff'.
 --
--- * @diff@ ('LimCalc.Calculus'): the /series extraction path/.
---   Expands @f(x + h)@ as a log-Puiseux series and reads off the
---   @h^1@ coefficient. Used by 'LimCalc.Calculus.diff'.
+-- * @diff@ ('LimCalc.Differentiation.Calculus'): the /series
+--   extraction path/. Expands @f(x + h)@ as a log-Puiseux series
+--   and reads off the @h^1@ coefficient. Used by
+--   'LimCalc.Differentiation.Calculus.diff'.
 --
 -- The series path generates Taylor coefficients by iterating
 -- 'deriveBase', making it a consequence of the algebraic path rather
 -- than an independent implementation.
-module LimCalc.DiffField
+module LimCalc.Differentiation.DiffField
   ( -- * Extensions
     Extension (..)
     -- * Differential field tower
@@ -51,10 +52,10 @@ module LimCalc.DiffField
   , knownSpecial
   ) where
 
-import LimCalc.Expr
-import LimCalc.Poly
-import LimCalc.RationalFunction
-import LimCalc.Simplify
+import LimCalc.Core.Expr
+import LimCalc.Algebra.Poly
+import LimCalc.Algebra.RationalFunction
+import LimCalc.Core.Simplify
 
 -- | A single extension of the differential field, adding a new
 -- element θ with a known derivation.

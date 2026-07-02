@@ -6,7 +6,7 @@
 --
 -- = Algorithm outline
 --
--- 1. /Hermite reduction/ ('LimCalc.RationalFunction.hermiteReduce'):
+-- 1. /Hermite reduction/ ('LimCalc.Algebra.RationalFunction.hermiteReduce'):
 --    split @f = g' + h@ where @g@ is a rational function (rational
 --    integral part) and @h@ is a proper fraction over a squarefree
 --    denominator.
@@ -21,10 +21,10 @@
 --
 -- The implementation is generalised from @RatFun Double@ to
 -- @RatFun AlgNum@ to support the trig integration path in
--- 'LimCalc.Risch.Exponential', which introduces genuinely complex
--- coefficients via the Euler substitution @t = e^(ix)@. All existing
--- arithmetic (@hermiteReduce@, @gcdPoly@, etc.) carries through
--- unchanged via 'AlgNum'\'s 'Num' and 'Fractional' instances.
+-- 'LimCalc.Integration.Risch.Exponential', which introduces genuinely
+-- complex coefficients via the Euler substitution @t = e^(ix)@. All
+-- existing arithmetic (@hermiteReduce@, @gcdPoly@, etc.) carries
+-- through unchanged via 'AlgNum'\'s 'Num' and 'Fractional' instances.
 --
 -- = Rational vs complex roots
 --
@@ -34,10 +34,10 @@
 -- /rational/. Allowing any complex root would always declare the
 -- integral elementary (with complex-coefficient logarithms), silently
 -- misclassifying genuinely non-elementary-over-the-reals integrals
--- like @1\/(x²+1)@. 'LimCalc.Risch.Exponential' uses
+-- like @1\/(x²+1)@. 'LimCalc.Integration.Risch.Exponential' uses
 -- 'findComplexRoots' instead, since that module deliberately extends
 -- the field to include @i@.
-module LimCalc.Risch.Primitive
+module LimCalc.Integration.Risch.Primitive
   ( -- * Integration
     integratePrimitive
   , PrimitiveResult (..)
@@ -66,12 +66,12 @@ module LimCalc.Risch.Primitive
 import Data.Complex (Complex, realPart, imagPart)
 import Data.List (minimumBy)
 import Data.Ratio ((%))
-import LimCalc.Poly
-import LimCalc.RationalFunction
-import LimCalc.DiffField
-import LimCalc.Expr
-import LimCalc.AlgNum
-import LimCalc.QPoly (QPoly(..))
+import LimCalc.Algebra.Poly
+import LimCalc.Algebra.RationalFunction
+import LimCalc.Differentiation.DiffField
+import LimCalc.Core.Expr
+import LimCalc.Algebra.AlgNum
+import LimCalc.Algebra.QPoly (QPoly(..))
 
 -- | Result of the Risch primitive-case integration algorithm.
 data PrimitiveResult

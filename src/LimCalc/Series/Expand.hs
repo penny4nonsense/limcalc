@@ -29,7 +29,7 @@
 -- All Taylor series are truncated to 'depth' terms. The default is
 -- 8, which is sufficient for derivative extraction (the @h^1@
 -- coefficient) and limit computation with good numerical stability.
-module LimCalc.Expand
+module LimCalc.Series.Expand
   ( -- * Expansion
     expand
     -- * Series operations
@@ -64,10 +64,10 @@ module LimCalc.Expand
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ratio (numerator, denominator)
-import LimCalc.Expr
-import LimCalc.Puiseux
-import LimCalc.Types
-import LimCalc.AlgNum
+import LimCalc.Core.Expr
+import LimCalc.Series.Puiseux
+import LimCalc.Core.Types
+import LimCalc.Algebra.AlgNum
 
 -- | Expand @f(x₀ + h)@ as a log-Puiseux series in @h@.
 --

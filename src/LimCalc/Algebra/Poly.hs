@@ -1,10 +1,10 @@
 -- | Univariate polynomials over an arbitrary coefficient ring.
 --
 -- 'Poly' is used throughout limcalc as the coefficient ring for
--- rational functions ('LimCalc.RationalFunction'), as the input to
--- resultant computation ('LimCalc.BivPoly'), and as the polynomial
--- arithmetic layer underlying the Risch integrator
--- ('LimCalc.Risch.Primitive').
+-- rational functions ('LimCalc.Algebra.RationalFunction'), as the
+-- input to resultant computation ('LimCalc.Algebra.BivPoly'), and as
+-- the polynomial arithmetic layer underlying the Risch integrator
+-- ('LimCalc.Integration.Risch.Primitive').
 --
 -- = Representation
 --
@@ -21,7 +21,7 @@
 -- general integral domains. The resultant is computed via the
 -- Sylvester matrix determinant with Gaussian elimination
 -- ('determinant'), which correctly accounts for row-swap sign flips.
-module LimCalc.Poly
+module LimCalc.Algebra.Poly
   ( -- * Type
     Poly (..)
     -- * Constructors

@@ -24,7 +24,7 @@
 -- @log(log(h))@ singularity at @x = 0@, which is outside this type.
 -- That case is documented as a known gap; the type is otherwise
 -- sufficient for all special functions currently in 'Expr'.
-module LimCalc.Puiseux
+module LimCalc.Series.Puiseux
   ( -- * Term type
     LogPuiseuxTerm (..)
     -- * Series type

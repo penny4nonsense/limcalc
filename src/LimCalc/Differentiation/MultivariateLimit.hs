@@ -24,7 +24,7 @@
 -- case uses 7 standard paths: the two coordinate axes, three lines
 -- of slopes 1, −1, 2, the parabola @y − y₀ = (x − x₀)²@, and the
 -- cubic @y − y₀ = (x − x₀)³@.
-module LimCalc.MultivariateLimit
+module LimCalc.Differentiation.MultivariateLimit
   ( -- * Result type
     MultivariateLimitResult (..)
     -- * Limit computation
@@ -39,9 +39,9 @@ module LimCalc.MultivariateLimit
   , withinTolerance
   ) where
 
-import LimCalc.Expr
-import LimCalc.Limit
-import LimCalc.Simplify
+import LimCalc.Core.Expr
+import LimCalc.Differentiation.Limit
+import LimCalc.Core.Simplify
 import qualified Data.Map.Strict as Map
 
 -- | Result of a multivariate limit computation.
@@ -108,7 +108,7 @@ limitAlongPath f path =
 --
 -- Dispatches on the number of variables:
 --
--- * 1 variable: delegates directly to 'LimCalc.Limit.limit'.
+-- * 1 variable: delegates directly to 'LimCalc.Differentiation.Limit.limit'.
 -- * 2 variables: probes 'standardPaths' and checks consistency via
 --   'checkPaths'.
 -- * Other: returns 'MVError' (not yet implemented).
