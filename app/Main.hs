@@ -5,7 +5,9 @@ module Main where
 import Data.Aeson
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as BL
-import System.IO (hSetBuffering, stdout, stdin, BufferMode(..))
+import System.IO (hSetBuffering, stdout, stdin, BufferMode(..), isEOF)
+import Data.Word (Word8)
+import qualified Data.ByteString.Lazy as BLW
 
 import LimCalc.Core.Expr
 import LimCalc.Core.ExprJSON ()
@@ -126,8 +128,26 @@ main = do
 
 loop :: IO ()
 loop = do
-  line <- BL.pack <$> getLine
-  case eitherDecode line of
-    Left err  -> BL.putStrLn (encode (RError ("Parse error: " ++ err)))
-    Right cmd -> BL.putStrLn (encode (dispatch cmd))
-  loop
+  eof <- isEOF
+  if eof
+    then return ()
+    else do
+      raw <- BL.pack <$> getLine
+      let line = stripBOM raw
+      case eitherDecode line of
+        Left err  -> BL.putStrLn (encode (RError ("Parse error: " ++ err)))
+        Right cmd -> BL.putStrLn (encode (dispatch cmd))
+      loop
+
+-- | Strip a UTF-8 BOM (0xEF 0xBB 0xBF) or UTF-16 BOM (0xFF 0xFE) if present.
+stripBOM :: BL.ByteString -> BL.ByteString
+stripBOM bs = case BL.uncons bs of
+  Just ('\255', rest) -> case BL.uncons rest of
+    Just ('\254', rest') -> rest'
+    _                    -> rest
+  Just ('\239', rest) -> case BL.uncons rest of
+    Just ('\187', rest') -> case BL.uncons rest' of
+      Just ('\191', rest'') -> rest''
+      _                     -> bs
+    _ -> bs
+  _ -> bs
