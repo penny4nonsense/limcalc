@@ -1,0 +1,221 @@
+// limcalc LaTeX math grammar
+//
+// Parses a subset of LaTeX math notation into a parse tree that the
+// transformer (parser.py) converts to Expr JSON dicts.
+//
+// = Operator precedence (lowest to highest)
+//
+//   expr        : addition and subtraction
+//   term        : multiplication and division
+//   factor      : unary negation
+//   power       : exponentiation (right-associative)
+//   atom        : numbers, variables, grouped expressions
+//
+// = Derivative notation
+//
+// Both d/dx and ∂/∂x are accepted and treated identically.
+//
+// = Grouping
+//
+// \left and \right are treated as pure grouping operators. The
+// delimiter after each does not need to match — \left( expr \right]
+// is accepted, as is \left. expr \right| (evaluation bar form).
+// The transformer ignores the delimiter type and just extracts
+// the inner expression.
+
+start: statement
+
+// ---------------------------------------------------------------------------
+// Top-level statement
+// ---------------------------------------------------------------------------
+
+statement: derivative_op expr      -> derivative
+         | expr                    -> expression
+
+// ---------------------------------------------------------------------------
+// Derivative operators
+// ---------------------------------------------------------------------------
+
+derivative_op: DIFF_D "/" DIFF_D varname                          -> diff_inline
+             | PARTIAL "/" PARTIAL varname                         -> diff_inline
+             | "\\frac" "{" DIFF_D "}" "{" DIFF_D varname "}"     -> diff_frac
+             | "\\frac" "{" PARTIAL "}" "{" PARTIAL varname "}"   -> diff_frac
+
+DIFF_D   : "d"
+PARTIAL  : "\\partial"
+
+// ---------------------------------------------------------------------------
+// Expressions (addition / subtraction)
+// ---------------------------------------------------------------------------
+
+expr: expr "+" term    -> add
+    | expr "-" term    -> sub
+    | term
+
+// ---------------------------------------------------------------------------
+// Terms (multiplication / division / fractions)
+// ---------------------------------------------------------------------------
+
+term: term "*" factor             -> mul
+    | term "\\cdot" factor        -> mul
+    | term "\\times" factor       -> mul
+    | term "/" factor             -> div
+    | term "\\div" factor         -> div
+    | "\\frac" "{" expr "}" "{" expr "}"  -> frac
+    | implicit_mul
+
+// Implicit multiplication: adjacent powers multiply
+// Examples: 2x, xy, 2\sin(x), \pi r^2
+implicit_mul: power power+    -> implicit_mul
+            | power
+
+// ---------------------------------------------------------------------------
+// Factors (unary negation)
+// ---------------------------------------------------------------------------
+
+factor: "-" implicit_mul    -> neg
+      | "+" implicit_mul    -> pos
+      | implicit_mul
+
+// ---------------------------------------------------------------------------
+// Powers (right-associative)
+// ---------------------------------------------------------------------------
+
+power: postfix "^" "{" expr "}"    -> pow_braced
+     | postfix "^" atom            -> pow_simple
+     | postfix
+
+// ---------------------------------------------------------------------------
+// Postfix (function application)
+// ---------------------------------------------------------------------------
+
+postfix: func_app
+       | atom
+
+// Function application in all common forms
+func_app: func_name "{" expr "}"           -> func_braced
+        | func_name "(" expr ")"           -> func_paren
+        | func_name grouped                -> func_grouped
+        | func_name atom                   -> func_atom
+
+// ---------------------------------------------------------------------------
+// Grouped expressions
+//
+// \left and \right are pure grouping — the delimiter after each is
+// consumed but ignored by the transformer. Any combination is valid:
+//   \left( expr \right)
+//   \left( expr \right]
+//   \left[ expr \right.
+//   \left. expr \right|
+//   \left| expr \right|
+// ---------------------------------------------------------------------------
+
+grouped: "\\left" LEFT_DELIM expr "\\right" RIGHT_DELIM    -> grouped_lr
+       | "(" expr ")"                                       -> grouped_paren
+       | "[" expr "]"                                       -> grouped_bracket
+       | "\\left|" expr "\\right|"                          -> abs_val
+       | "\\left\\|" expr "\\right\\|"                      -> norm
+
+// Any delimiter that can follow \left or \right
+LEFT_DELIM:  "(" | "[" | "\\{" | "|" | "\\|" | "."
+RIGHT_DELIM: ")" | "]" | "\\}" | "|" | "\\|" | "."
+
+// ---------------------------------------------------------------------------
+// Atoms
+// ---------------------------------------------------------------------------
+
+atom: NUMBER                    -> number
+    | varname                   -> variable
+    | CONST                     -> constant
+    | "{" expr "}"              -> brace
+    | grouped
+
+// ---------------------------------------------------------------------------
+// Function names
+// ---------------------------------------------------------------------------
+
+func_name: "\\sin"                    -> fn_sin
+         | "\\cos"                    -> fn_cos
+         | "\\tan"                    -> fn_tan
+         | "\\sec"                    -> fn_sec
+         | "\\csc"                    -> fn_csc
+         | "\\cot"                    -> fn_cot
+         | "\\exp"                    -> fn_exp
+         | "\\log"                    -> fn_log
+         | "\\ln"                     -> fn_log
+         | "\\sqrt"                   -> fn_sqrt
+         | "\\arcsin"                 -> fn_arcsin
+         | "\\asin"                   -> fn_arcsin
+         | "\\arccos"                 -> fn_arccos
+         | "\\acos"                   -> fn_arccos
+         | "\\arctan"                 -> fn_arctan
+         | "\\atan"                   -> fn_arctan
+         | "\\sinh"                   -> fn_sinh
+         | "\\cosh"                   -> fn_cosh
+         | "\\tanh"                   -> fn_tanh
+         | "\\text{erf}"              -> fn_erf
+         | "\\text{Si}"               -> fn_si
+         | "\\text{Ci}"               -> fn_ci
+         | "\\text{Ei}"               -> fn_ei
+         | "\\text{li}"               -> fn_li
+         | "\\operatorname{erf}"      -> fn_erf
+         | "\\operatorname{Si}"       -> fn_si
+         | "\\operatorname{Ci}"       -> fn_ci
+         | "\\operatorname{Ei}"       -> fn_ei
+         | "\\operatorname{li}"       -> fn_li
+         | "\\mathrm{erf}"            -> fn_erf
+         | "\\mathrm{Si}"             -> fn_si
+         | "\\mathrm{Ci}"             -> fn_ci
+         | "\\mathrm{Ei}"             -> fn_ei
+         | "\\mathrm{li}"             -> fn_li
+
+// ---------------------------------------------------------------------------
+// Variable names
+// ---------------------------------------------------------------------------
+
+varname: LETTER                              -> varname_simple
+       | GREEK                              -> varname_simple
+       | LETTER "_" "{" varname_body "}"    -> varname_sub
+       | LETTER "_" LETTER                  -> varname_sub
+       | LETTER "_" NUMBER                  -> varname_sub_num
+       | GREEK  "_" "{" varname_body "}"    -> varname_sub
+       | GREEK  "_" LETTER                  -> varname_sub
+       | GREEK  "_" NUMBER                  -> varname_sub_num
+
+// Body of a subscript (can be letters and numbers)
+varname_body: (LETTER | GREEK | NUMBER)+
+
+// Single ASCII letters
+// Note: e and i are in CONST and take priority
+LETTER: /[a-df-hj-zA-Z]/
+
+// Named constants — matched before LETTER due to priority
+CONST.2: "\\pi"
+       | "\\infty"
+       | "e"
+       | "i"
+       | "\\e"
+       | "\\i"
+
+// Lowercase Greek letters
+GREEK: "\\alpha"      | "\\beta"       | "\\gamma"     | "\\delta"
+     | "\\epsilon"    | "\\varepsilon" | "\\zeta"      | "\\eta"
+     | "\\theta"      | "\\vartheta"   | "\\iota"      | "\\kappa"
+     | "\\lambda"     | "\\mu"         | "\\nu"        | "\\xi"
+     | "\\rho"        | "\\varrho"     | "\\sigma"     | "\\varsigma"
+     | "\\tau"        | "\\upsilon"    | "\\phi"       | "\\varphi"
+     | "\\chi"        | "\\psi"        | "\\omega"
+     // Uppercase Greek
+     | "\\Gamma"      | "\\Delta"      | "\\Theta"     | "\\Lambda"
+     | "\\Xi"         | "\\Pi"         | "\\Sigma"     | "\\Upsilon"
+     | "\\Phi"        | "\\Psi"        | "\\Omega"
+
+// Numbers
+NUMBER: /[0-9]+(\.[0-9]+)?/
+
+// ---------------------------------------------------------------------------
+// Whitespace
+// ---------------------------------------------------------------------------
+
+%ignore /\s+/
+%ignore /%.*/
