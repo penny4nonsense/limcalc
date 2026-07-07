@@ -110,17 +110,10 @@ jobs:
         shell: pwsh
         run: Get-ChildItem python/limcalc/bin/
 
-      - name: Rename and mark executable (Unix)
+      - name: Mark executable (Unix)
         if: runner.os != 'Windows'
         run: |
-          mv python/limcalc/bin/${{ matrix.asset }} python/limcalc/bin/${{ matrix.bin_name }}
           chmod +x python/limcalc/bin/${{ matrix.bin_name }}
-
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Rename-Item python/limcalc/bin/${{ matrix.asset }} ${{ matrix.bin_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
