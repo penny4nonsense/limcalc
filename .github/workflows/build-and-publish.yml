@@ -50,14 +50,16 @@ jobs:
       - name: Locate binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          BIN=$(cabal exec -- which limcalc-cli)
+          BIN=$(find dist-newstyle -name "limcalc-cli" -type f | head -1)
+          echo "Found: $BIN"
           echo "CLI_BIN=$BIN" >> $GITHUB_ENV
 
       - name: Locate binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $bin = cabal exec -- where limcalc-cli
+          $bin = Get-ChildItem -Recurse -Filter "limcalc-cli.exe" dist-newstyle | Select-Object -First 1 -ExpandProperty FullName
+          echo "Found: $bin"
           echo "CLI_BIN=$bin" >> $env:GITHUB_ENV
 
       - name: Upload binary artifact
@@ -98,6 +100,15 @@ jobs:
         with:
           name: ${{ matrix.asset }}
           path: python/limcalc/bin/
+
+      - name: Debug — list bin dir (Unix)
+        if: runner.os != 'Windows'
+        run: ls -la python/limcalc/bin/
+
+      - name: Debug — list bin dir (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-ChildItem python/limcalc/bin/
 
       - name: Rename and mark executable (Unix)
         if: runner.os != 'Windows'
