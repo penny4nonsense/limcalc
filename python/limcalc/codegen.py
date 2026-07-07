@@ -4,6 +4,11 @@ Code generation from limcalc Expr JSON to NumPy/Numba/Python expressions.
 Takes the JSON representation of an Expr (as returned by the limcalc CLI)
 and produces a string of Python code suitable for use with NumPy or Numba.
 
+Namespace conventions for generated code:
+  - numpy functions:   np.<func>        (import numpy as np)
+  - scipy functions:   scipy.<func>     (import scipy.special as scipy)
+  - math functions:    math.<func>      (import math)
+
 Example:
     expr = {"tag": "Mul", "left": {"tag": "Const", "value": 2.0},
             "right": {"tag": "Cos", "arg": {"tag": "Var", "name": "x"}}}
@@ -25,8 +30,9 @@ _PREC_ATOM = 4
 def to_numpy(expr: dict) -> str:
     """Convert a limcalc Expr JSON object to a NumPy expression string.
 
-    The result is a valid Python expression using numpy (imported as np)
-    and scipy.special for special functions.
+    The result is a valid Python expression using:
+      - numpy imported as np
+      - scipy.special imported as scipy
 
     Args:
         expr: A dict representing a limcalc Expr in JSON form.
@@ -38,13 +44,18 @@ def to_numpy(expr: dict) -> str:
         >>> to_numpy({"tag": "Sin", "arg": {"tag": "Var", "name": "x"}})
         'np.sin(x)'
     """
-    return _gen(expr, _PREC_ADD)
+    return _gen(expr, _PREC_ADD, use_numpy=True)
 
 
 def to_python(expr: dict) -> str:
     """Convert a limcalc Expr JSON to a plain Python expression (no numpy).
 
-    Uses math module functions instead of numpy. Useful for scalar evaluation.
+    Uses math and scipy.special module functions instead of numpy.
+    Useful for scalar evaluation.
+
+    The result is a valid Python expression using:
+      - math imported as math
+      - scipy.special imported as scipy
 
     Args:
         expr: A dict representing a limcalc Expr in JSON form.
@@ -72,11 +83,11 @@ def to_lambda(expr: dict, vars: list[str]) -> Any:
         array([0.        , 0.84147098])
     """
     import numpy as np
-    import scipy.special
+    import scipy.special as scipy
     code = to_numpy(expr)
     args = ", ".join(vars)
     fn = eval(f"lambda {args}: {code}",
-              {"np": np, "scipy": scipy.special})
+              {"np": np, "scipy": scipy})
     return fn
 
 
@@ -185,52 +196,38 @@ def _gen(expr: dict, prec: int, use_numpy: bool = True) -> str:
 
     elif tag == "Arcsin":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        return f"{np_prefix}.arcsin({arg})"
+        return f"{np_prefix}.arcsin({arg})" if use_numpy else f"{np_prefix}.asin({arg})"
 
     elif tag == "Arccos":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        return f"{np_prefix}.arccos({arg})"
+        return f"{np_prefix}.arccos({arg})" if use_numpy else f"{np_prefix}.acos({arg})"
 
     elif tag == "Arctan":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        return f"{np_prefix}.arctan({arg})"
+        return f"{np_prefix}.arctan({arg})" if use_numpy else f"{np_prefix}.atan({arg})"
 
-    # Special functions via scipy.special
+    # Special functions — always via scipy.special (imported as scipy)
     elif tag == "Erf":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        if use_numpy:
-            return f"scipy.erf({arg})"
-        else:
-            return f"math.erf({arg})"
+        return f"scipy.erf({arg})"
 
     elif tag == "Si":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        if use_numpy:
-            return f"scipy.sici({arg})[0]"
-        else:
-            return f"scipy.special.sici({arg})[0]"
+        return f"scipy.sici({arg})[0]"
 
     elif tag == "Ci":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        if use_numpy:
-            return f"scipy.sici({arg})[1]"
-        else:
-            return f"scipy.special.sici({arg})[1]"
+        return f"scipy.sici({arg})[1]"
 
     elif tag == "Ei":
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        if use_numpy:
-            return f"scipy.expi({arg})"
-        else:
-            return f"scipy.special.expi({arg})"
+        return f"scipy.expi({arg})"
 
     elif tag == "Li":
         # li(x) = Ei(log(x))
         arg = _gen(expr["arg"], _PREC_ADD, use_numpy)
-        if use_numpy:
-            return f"scipy.expi(np.log({arg}))"
-        else:
-            return f"scipy.special.expi(math.log({arg}))"
+        log_fn = "np.log" if use_numpy else "math.log"
+        return f"scipy.expi({log_fn}({arg}))"
 
     else:
         raise ValueError(f"Unknown Expr tag: {tag}")

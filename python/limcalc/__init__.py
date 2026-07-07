@@ -6,27 +6,27 @@ differentiation, integration, and limit computation via log-Puiseux
 series expansion. Results can be converted to NumPy or Numba code
 for fast numerical evaluation.
 
-Basic usage:
+String input accepts LaTeX math notation:
 
     import limcalc as lc
 
     # Differentiate sin(x^2)
-    f = lc.diff("sin(x^2)", "x")
+    f = lc.diff(r"\\sin(x^2)", "x")
     print(f.pretty())      # "2*x*cos(x^2)"
     print(f.to_numpy())    # "2 * x * np.cos(x ** 2)"
 
     # Integrate exp(-x^2)
-    g = lc.integrate("exp(-x^2)", "x")
+    g = lc.integrate(r"e^{-x^2}", "x")
     print(g.pretty())      # "(sqrt(π)/2)*erf(x)"
 
     # Compute a limit
-    print(lc.limit("sin(x)/x", "x", 0))  # 1.0
+    print(lc.limit(r"\\frac{\\sin(x)}{x}", "x", 0))  # 1.0
 
     # Gradient of a multivariate expression
-    grad = lc.gradient("x^2 + y^2", ["x", "y"])
+    grad = lc.gradient(r"x^2 + y^2", ["x", "y"])
 
-Note: String expression input requires the LaTeX parser (coming soon).
-Until then, use Expr JSON dicts directly via LimCalc() client.
+Expr JSON dicts can also be passed directly to all functions,
+bypassing the parser. See LimCalc() for the low-level client.
 """
 
 from __future__ import annotations
@@ -61,6 +61,20 @@ def _get_client() -> LimCalc:
     if _client is None or (_client._proc and _client._proc.poll() is not None):
         _client = LimCalc()
     return _client
+
+
+def _parse(expr_str: str) -> dict:
+    """Parse a LaTeX string to an Expr JSON dict."""
+    from limcalc.parser import parse as _latex_parse
+    result = _latex_parse(expr_str)
+    # parse() returns a float for limits/eval expressions; those
+    # can't be passed to the engine as an Expr, so we reject them here.
+    if not isinstance(result, dict):
+        raise TypeError(
+            f"Expected a symbolic expression, got a numeric result ({result!r}). "
+            "Use lc.limit() or lc.parse() directly for evaluated expressions."
+        )
+    return result
 
 
 class Expr:
@@ -222,28 +236,11 @@ def gradient_expr(expr: dict, vars: list[str]) -> list[Expr]:
     return [Expr(r) for r in results]
 
 
-# ---------------------------------------------------------------------------
-# String-input API (requires LaTeX parser — coming soon)
-# ---------------------------------------------------------------------------
-
-def _parse(expr_str: str) -> dict:
-    """Parse a string expression to Expr JSON.
-
-    Currently raises NotImplementedError — the LaTeX parser is not
-    yet implemented. Use the _expr variants with JSON dicts directly.
-    """
-    raise NotImplementedError(
-        "String expression parsing is not yet implemented. "
-        "Use diff_expr(), integrate_expr(), etc. with Expr JSON dicts directly, "
-        "or set the LIMCALC_CLI environment variable and use LimCalc() directly."
-    )
-
-
 def diff(expr, var: str) -> Expr:
     """Differentiate expr with respect to var.
 
     Args:
-        expr: An Expr JSON dict or a string expression (coming soon).
+        expr: A LaTeX string or an Expr JSON dict.
         var:  Variable name.
 
     Returns:
@@ -258,7 +255,7 @@ def partial_diff(expr, var: str) -> Expr:
     """Partial derivative of expr with respect to var.
 
     Args:
-        expr: An Expr JSON dict or a string expression (coming soon).
+        expr: A LaTeX string or an Expr JSON dict.
         var:  Variable name.
 
     Returns:
@@ -273,7 +270,7 @@ def integrate(expr, var: str) -> Expr:
     """Integrate expr with respect to var.
 
     Args:
-        expr: An Expr JSON dict or a string expression (coming soon).
+        expr: A LaTeX string or an Expr JSON dict.
         var:  Variable name.
 
     Returns:
@@ -291,7 +288,7 @@ def limit(expr, var: str, x0: float) -> float:
     """Compute lim_{var -> x0} expr.
 
     Args:
-        expr: An Expr JSON dict or a string expression (coming soon).
+        expr: A LaTeX string or an Expr JSON dict.
         var:  Variable name.
         x0:   Limit point.
 
@@ -310,7 +307,7 @@ def gradient(expr, vars: list[str]) -> list[Expr]:
     """Compute the gradient of expr.
 
     Args:
-        expr: An Expr JSON dict or a string expression (coming soon).
+        expr: A LaTeX string or an Expr JSON dict.
         vars: List of variable names.
 
     Returns:
