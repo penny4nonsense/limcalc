@@ -1,4 +1,7 @@
 dist-newstyle/
 cabal.project.local
+.idea/
 *.hi
 *.o
+limcalc_paper_final.*
+*.bib

@@ -1,0 +1,150 @@
+name: Build and publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-cli:
+    name: Build limcalc-cli (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            binary: limcalc-cli.exe
+            asset: limcalc-cli-windows-x86_64.exe
+          - os: ubuntu-latest
+            binary: limcalc-cli
+            asset: limcalc-cli-linux-x86_64
+          - os: macos-latest
+            binary: limcalc-cli
+            asset: limcalc-cli-macos-x86_64
+          - os: macos-14
+            binary: limcalc-cli
+            asset: limcalc-cli-macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GHC and cabal
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          cabal-version: "latest"
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: cabal-${{ matrix.os }}-${{ hashFiles('**/*.cabal', '**/cabal.project') }}
+          restore-keys: cabal-${{ matrix.os }}-
+
+      - name: Build
+        run: cabal build limcalc-cli
+
+      - name: Locate binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          BIN=$(cabal exec -- which limcalc-cli)
+          echo "CLI_BIN=$BIN" >> $GITHUB_ENV
+
+      - name: Locate binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = cabal exec -- where limcalc-cli
+          echo "CLI_BIN=$bin" >> $env:GITHUB_ENV
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ env.CLI_BIN }}
+
+  build-wheels:
+    name: Build wheel (${{ matrix.os }})
+    needs: build-cli
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            asset: limcalc-cli-windows-x86_64.exe
+            bin_name: limcalc-cli.exe
+            plat: win_amd64
+          - os: ubuntu-latest
+            asset: limcalc-cli-linux-x86_64
+            bin_name: limcalc-cli
+            plat: manylinux2014_x86_64
+          - os: macos-latest
+            asset: limcalc-cli-macos-x86_64
+            bin_name: limcalc-cli
+            plat: macosx_12_0_x86_64
+          - os: macos-14
+            asset: limcalc-cli-macos-arm64
+            bin_name: limcalc-cli
+            plat: macosx_14_0_arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: python/limcalc/bin/
+
+      - name: Rename and mark executable (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mv python/limcalc/bin/${{ matrix.asset }} python/limcalc/bin/${{ matrix.bin_name }}
+          chmod +x python/limcalc/bin/${{ matrix.bin_name }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Rename-Item python/limcalc/bin/${{ matrix.asset }} ${{ matrix.bin_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build wheel
+        working-directory: python
+        run: uv build --wheel
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.plat }}
+          path: python/dist/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
