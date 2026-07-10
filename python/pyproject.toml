@@ -1,6 +1,6 @@
 [project]
 name = "limcalc"
-version = "0.1.0"
+version = "0.1.1"
 description = "Limit-based symbolic calculus engine with NumPy/Numba code generation"
 authors = [{name = "Jason Parker", email = "jparker588@gmail.com"}]
 license = {text = "MIT"}
@@ -26,6 +26,4 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["limcalc"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+artifacts = ["limcalc/bin/*"]

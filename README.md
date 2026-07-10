@@ -4,8 +4,6 @@ A symbolic calculus engine built on the limit definition rather than rewriting r
 
 Differentiation, integration, and limit evaluation are all derived from a single underlying representation — the log-Puiseux series — finite formal sums of terms `c · hᵖ · log(h)ᵏ` with `c` an algebraic number, `p` rational, and `k` a natural number. The derivative is the coefficient of `h¹` in the expansion of `f(x+h)`. The product rule and chain rule are not implemented; both are consequences of the limit definition and are observable in the output.
 
-See the [paper](https://github.com/penny4nonsense/limcalc) for the mathematical foundations.
-
 ## Quick start
 
 ```haskell

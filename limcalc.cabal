@@ -78,8 +78,8 @@ library
                       LimCalc.Core.ExprJSON
     build-depends:
         base ^>=4.20.2.0,
-        containers,
-        aeson
+        containers >= 0.7 && < 0.8,
+        aeson >= 2.3.0 && < 2.4
     hs-source-dirs:   src
     default-language: GHC2021
 
@@ -104,6 +104,6 @@ executable limcalc-cli
     build-depends:
         base ^>=4.20.2.0,
         limcalc,
-        aeson,
-        bytestring,
-        containers
+        aeson >= 2.3.0 && < 2.4,
+        bytestring >= 0.12.2 && < 0.13,
+        containers >= 0.7 && < 0.8
